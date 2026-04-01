@@ -19,6 +19,19 @@ npm install
 npm run dev
 ```
 
+## Project structure
+
+```
+src/        React UI — components, screens, hooks
+app/        Protocol logic — no React, no UI
+├── auth/         Authentication (Device Code, XSTS, tokens)
+├── streaming/    Session lifecycle (start, state machine, keepalive)
+├── webrtc/       RTCPeerConnection, SDP, ICE
+├── channels/     Data channels (message, control, input, chat)
+├── input/        Binary input serialization (gamepad, mouse, keyboard)
+└── render/       WebGPU renderer, audio
+```
+
 ## Code style
 
 - TypeScript strict mode — no `any`, no type assertions without justification
