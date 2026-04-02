@@ -66,6 +66,28 @@ export async function pollForToken(
   }
 }
 
+export async function refreshUserToken(
+  refreshToken: string,
+  signal: AbortSignal
+): Promise<UserToken> {
+  const res = await fetch(
+    `${SERVER}/auth/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'refresh_token',
+        refresh_token: refreshToken,
+        client_id:     CLIENT_ID,
+        scope:         SCOPES,
+      }),
+      signal,
+    }
+  )
+  if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`)
+  return res.json() as Promise<UserToken>
+}
+
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms)

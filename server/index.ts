@@ -41,4 +41,52 @@ server.post('/auth/token', async (request, reply) => {
   return reply.status(res.status).send(data)
 })
 
+server.post('/auth/xbl', async (request, reply) => {
+  const res = await fetch(
+    'https://user.auth.xboxlive.com/user/authenticate',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type':           'application/json',
+        'x-xbl-contract-version': '1',
+      },
+      body: JSON.stringify(request.body),
+    }
+  )
+  const data = await res.json()
+  return reply.status(res.status).send(data)
+})
+
+server.post('/auth/xsts', async (request, reply) => {
+  const res = await fetch(
+    'https://xsts.auth.xboxlive.com/xsts/authorize',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type':           'application/json',
+        'x-xbl-contract-version': '1',
+      },
+      body: JSON.stringify(request.body),
+    }
+  )
+  const data = await res.json()
+  return reply.status(res.status).send(data)
+})
+
+server.post('/auth/xhome', async (request, reply) => {
+  const res = await fetch(
+    'https://xhome.gssv-play-prod.xboxlive.com/v2/login/user',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type':    'application/json',
+        'x-gssv-client':   'XboxComBrowser',
+      },
+      body: JSON.stringify(request.body),
+    }
+  )
+  const data = await res.json()
+  return reply.status(res.status).send(data)
+})
+
 await server.listen({ port: PORT })
