@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Login } from '@/screens/Login'
+import { ConsoleList } from '@/screens/ConsoleList'
 import type { UserToken } from '../app/auth/devicecode'
 import { buildAuthSession } from '../app/auth/xsts'
 import type { AuthSession } from '../app/auth/xsts'
@@ -9,7 +10,8 @@ type AppState =
   | { phase: 'loading' }
   | { phase: 'login' }
   | { phase: 'building' }
-  | { phase: 'ready'; session: AuthSession }
+  | { phase: 'consoles'; session: AuthSession }
+  | { phase: 'selected'; session: AuthSession; consoleId: string }
   | { phase: 'error'; message: string }
 
 export default function App() {
@@ -23,7 +25,7 @@ export default function App() {
     getValidSession(ac.signal)
       .then(session => {
         if (ac.signal.aborted) return
-        if (session) setState({ phase: 'ready', session })
+        if (session) setState({ phase: 'consoles', session })
         else setState({ phase: 'login' })
       })
       .catch(err => {
@@ -42,7 +44,7 @@ export default function App() {
     try {
       const session = await buildAuthSession(userToken.access_token)
       saveSession(userToken, session)
-      setState({ phase: 'ready', session })
+      setState({ phase: 'consoles', session })
     } catch (err) {
       setState({ phase: 'error', message: (err as Error).message })
     }
@@ -70,10 +72,19 @@ export default function App() {
     return <Login onAuthenticated={handleAuthenticated} />
   }
 
-  // phase === 'ready'
+  if (state.phase === 'consoles') {
+    return (
+      <ConsoleList
+        session={state.session}
+        onSelect={consoleId => setState({ phase: 'selected', session: state.session, consoleId })}
+      />
+    )
+  }
+
+  // phase === 'selected' — placeholder for Fase 3
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <p className="text-sm text-muted-foreground">Authenticated ✓</p>
+      <p className="text-sm text-muted-foreground">Console selected: {state.consoleId}</p>
     </div>
   )
 }

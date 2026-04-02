@@ -89,4 +89,21 @@ server.post('/auth/xhome', async (request, reply) => {
   return reply.status(res.status).send(data)
 })
 
+server.post('/smartglass/devices', async (request, reply) => {
+  const { uhs, token } = request.body as { uhs: string; token: string }
+  const res = await fetch(
+    'https://xccs.xboxlive.com/lists/devices?queryCurrentDevice=false&includeStorageDevices=true',
+    {
+      headers: {
+        'Authorization':          `XBL3.0 x=${uhs};${token}`,
+        'Accept':                 'application/json',
+        'x-xbl-contract-version': '4',
+        'skillplatform':          'RemotePlay',
+      },
+    }
+  )
+  const data = await res.json()
+  return reply.status(res.status).send(data)
+})
+
 await server.listen({ port: PORT })
