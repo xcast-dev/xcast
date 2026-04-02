@@ -5,8 +5,10 @@ import type { UserToken } from '../app/auth/devicecode'
 import { buildAuthSession } from '../app/auth/xsts'
 import type { AuthSession } from '../app/auth/xsts'
 import { saveSession, getValidSession, getRefreshToken } from '../app/auth/persistence'
-import { startSession, pollUntilProvisioned } from '../app/streaming/session'
+import { startSession, pollUntilProvisioned, startKeepalive } from '../app/streaming/session'
 import type { SessionState, StreamSession } from '../app/streaming/session'
+import { negotiate } from '../app/webrtc/negotiation'
+import type { WebRTCResult } from '../app/webrtc/negotiation'
 
 type AppState =
   | { phase: 'loading' }
@@ -14,7 +16,10 @@ type AppState =
   | { phase: 'building' }
   | { phase: 'consoles'; session: AuthSession }
   | { phase: 'connecting'; session: AuthSession; sessionState: SessionState }
-  | { phase: 'streaming'; session: AuthSession; streamSession: StreamSession }
+  | { phase: 'negotiating-sdp'; session: AuthSession; streamSession: StreamSession }
+  | { phase: 'negotiating-ice'; session: AuthSession; streamSession: StreamSession }
+  | { phase: 'waiting-connection'; session: AuthSession; streamSession: StreamSession }
+  | { phase: 'streaming'; session: AuthSession; streamSession: StreamSession; webrtc: WebRTCResult }
   | { phase: 'error'; message: string }
 
 export default function App() {
@@ -76,7 +81,30 @@ export default function App() {
         sessionState => setState({ phase: 'connecting', session, sessionState }),
       )
       if (ac.signal.aborted) return
-      setState({ phase: 'streaming', session, streamSession })
+
+      setState({ phase: 'negotiating-sdp', session, streamSession })
+
+      const webrtc = await negotiate(
+        session,
+        streamSession,
+        ac.signal,
+        // Progress callbacks
+        (phase) => {
+          if (phase === 'ice-exchange') {
+            setState({ phase: 'negotiating-ice', session, streamSession })
+          } else if (phase === 'waiting-tracks') {
+            setState({ phase: 'waiting-connection', session, streamSession })
+          }
+        }
+      )
+      if (ac.signal.aborted) return
+
+      startKeepalive(session, streamSession.sessionId, ac.signal).catch(err => {
+        if ((err as DOMException).name === 'AbortError') return
+        setState({ phase: 'error', message: (err as Error).message })
+      })
+
+      setState({ phase: 'streaming', session, streamSession, webrtc })
     } catch (err) {
       if (ac.signal.aborted) return
       if ((err as DOMException).name === 'AbortError') return
@@ -115,19 +143,25 @@ export default function App() {
     )
   }
 
-  if (state.phase === 'connecting') {
+  if (state.phase === 'connecting' || state.phase === 'negotiating-sdp' || state.phase === 'negotiating-ice' || state.phase === 'waiting-connection') {
+    const statusText = 
+      state.phase === 'negotiating-sdp' ? 'Exchanging SDP offer/answer…' :
+      state.phase === 'negotiating-ice' ? 'Exchanging ICE candidates…' :
+      state.phase === 'waiting-connection' ? 'Establishing connection…' :
+      `${state.sessionState}…`
+    
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">{state.sessionState}…</p>
+        <p className="text-sm text-muted-foreground">{statusText}</p>
       </div>
     )
   }
 
-  // phase === 'streaming' — placeholder for Fase 4
+  // phase === 'streaming' — placeholder for Fase 5 (data channels)
   return (
     <div className="flex min-h-screen items-center justify-center">
       <p className="text-sm text-muted-foreground">
-        Provisioned ✓ — session {state.streamSession.sessionId}
+        WebRTC connected ✓
       </p>
     </div>
   )

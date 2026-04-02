@@ -59,6 +59,7 @@ export async function pollUntilProvisioned(
     const { state, errorDetails } = await res.json() as StateResponse
 
     onStateChange?.(state)
+    console.log('[SESSION] Current state:', state)
 
     if (state === 'Failed') {
       throw new Error(`Session failed: ${errorDetails ?? 'unknown'}`)
@@ -66,7 +67,9 @@ export async function pollUntilProvisioned(
 
     if (state === 'ReadyToConnect' && !connected) {
       connected = true
+      console.log('[SESSION] Fetching purpose token...')
       const purposeToken = await getPurposeToken(refreshToken)
+      console.log('[SESSION] Calling /connect with purpose token...')
       const connectRes = await fetch(`${SERVER}/streaming/${sessionId}/connect`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -76,7 +79,27 @@ export async function pollUntilProvisioned(
       if (!connectRes.ok) throw new Error(`connect failed: ${connectRes.status}`)
     }
 
-    if (state === 'Provisioned') return
+    if (state === 'Provisioned') {
+      // Workaround: some Xbox consoles skip ReadyToConnect and go straight to Provisioned
+      // Send purpose token here if we haven't already
+      if (!connected) {
+        console.log('[SESSION] Provisioned without ReadyToConnect - sending purpose token now')
+        const purposeToken = await getPurposeToken(refreshToken)
+        const connectRes = await fetch(`${SERVER}/streaming/${sessionId}/connect`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ baseUri: session.baseUri, gsToken: session.gsToken, userToken: purposeToken }),
+          signal,
+        })
+        if (!connectRes.ok) console.warn('[SESSION] connect failed but continuing:', connectRes.status)
+        connected = true
+        
+        // Give console time to process authorization before WebRTC negotiation
+        console.log('[SESSION] Waiting 2s for console to process authorization...')
+        await sleep(2000, signal)
+      }
+      return
+    }
 
     await sleep(1000, signal)
   }

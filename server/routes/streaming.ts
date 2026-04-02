@@ -58,7 +58,8 @@ export async function streamingRoutes(server: FastifyInstance) {
         fallbackRegionNames: [],
       }),
     })
-    return reply.status(res.status).send(await res.json())
+    const text = await res.text()
+    return reply.status(res.status).send(text ? JSON.parse(text) : {})
   })
 
   server.post('/streaming/:sessionId/state', async (request, reply) => {
@@ -67,7 +68,10 @@ export async function streamingRoutes(server: FastifyInstance) {
     const res = await fetch(`${baseUri}/v5/sessions/home/${sessionId}/state`, {
       headers: streamingHeaders(gsToken),
     })
-    return reply.status(res.status).send(await res.json())
+    const text = await res.text()
+    const data = text ? JSON.parse(text) : {}
+    console.log('[SERVER] GET /state response:', JSON.stringify(data))
+    return reply.status(res.status).send(data)
   })
 
   server.post('/streaming/:sessionId/connect', async (request, reply) => {
@@ -75,12 +79,16 @@ export async function streamingRoutes(server: FastifyInstance) {
     const { baseUri, gsToken, userToken } = request.body as {
       baseUri: string; gsToken: string; userToken: string
     }
+    console.log('[SERVER] POST /connect for session:', sessionId)
     const res = await fetch(`${baseUri}/v5/sessions/home/${sessionId}/connect`, {
       method:  'POST',
       headers: streamingHeaders(gsToken),
       body:    JSON.stringify({ userToken }),
     })
-    return reply.status(res.status).send(await res.json())
+    const text = await res.text()
+    console.log('[SERVER] POST /connect Xbox response status:', res.status)
+    console.log('[SERVER] POST /connect Xbox response body:', text || '(empty)')
+    return reply.status(res.status).send(text ? JSON.parse(text) : {})
   })
 
   server.post('/streaming/:sessionId/keepalive', async (request, reply) => {
@@ -92,6 +100,63 @@ export async function streamingRoutes(server: FastifyInstance) {
       body:    '{}',
     })
     return reply.status(res.status).send({})
+  })
+
+  server.post('/streaming/:sessionId/sdp', async (request, reply) => {
+    const { sessionId } = request.params as { sessionId: string }
+    const { baseUri, gsToken, ...body } = request.body as {
+      baseUri: string; gsToken: string; [k: string]: unknown
+    }
+    const res = await fetch(`${baseUri}/v5/sessions/home/${sessionId}/sdp`, {
+      method:  'POST',
+      headers: streamingHeaders(gsToken),
+      body:    JSON.stringify(body),
+    })
+    const text = await res.text()
+    return reply.status(res.status).send(text ? JSON.parse(text) : {})
+  })
+
+  server.get('/streaming/:sessionId/sdp', async (request, reply) => {
+    const { sessionId } = request.params as { sessionId: string }
+    const { baseUri, gsToken } = request.query as { baseUri: string; gsToken: string }
+    const res = await fetch(`${baseUri}/v5/sessions/home/${sessionId}/sdp`, {
+      headers: streamingHeaders(gsToken),
+    })
+    const text = await res.text()
+    return reply.status(res.status).send(text ? JSON.parse(text) : {})
+  })
+
+  server.post('/streaming/:sessionId/ice', async (request, reply) => {
+    const { sessionId } = request.params as { sessionId: string }
+    const { baseUri, gsToken, ...body } = request.body as {
+      baseUri: string; gsToken: string; [k: string]: unknown
+    }
+    console.log('[SERVER] POST /ice body sent to Xbox:', JSON.stringify(body, null, 2))
+    const res = await fetch(`${baseUri}/v5/sessions/home/${sessionId}/ice`, {
+      method:  'POST',
+      headers: streamingHeaders(gsToken),
+      body:    JSON.stringify(body),
+    })
+    const text = await res.text()
+    console.log('[SERVER] POST /ice Xbox response status:', res.status)
+    console.log('[SERVER] POST /ice Xbox response body:', text || '(empty)')
+    return reply.status(res.status).send(text ? JSON.parse(text) : {})
+  })
+
+  server.get('/streaming/:sessionId/ice', async (request, reply) => {
+    const { sessionId } = request.params as { sessionId: string }
+    const { baseUri, gsToken } = request.query as { baseUri: string; gsToken: string }
+    const res = await fetch(`${baseUri}/v5/sessions/home/${sessionId}/ice`, {
+      headers: streamingHeaders(gsToken),
+    })
+    console.log('[SERVER] GET /ice Xbox response status:', res.status)
+    if (res.status === 204) {
+      console.log('[SERVER] GET /ice Xbox returned 204 (No Content)')
+      return reply.status(204).send()
+    }
+    const text = await res.text()
+    console.log('[SERVER] GET /ice Xbox response body:', text)
+    return reply.status(res.status).send(text ? JSON.parse(text) : {})
   })
 
   server.delete('/streaming/:sessionId', async (request, reply) => {
