@@ -4,14 +4,17 @@ import { ConsoleList } from '@/screens/ConsoleList'
 import type { UserToken } from '../app/auth/devicecode'
 import { buildAuthSession } from '../app/auth/xsts'
 import type { AuthSession } from '../app/auth/xsts'
-import { saveSession, getValidSession } from '../app/auth/persistence'
+import { saveSession, getValidSession, getRefreshToken } from '../app/auth/persistence'
+import { startSession, pollUntilProvisioned } from '../app/streaming/session'
+import type { SessionState, StreamSession } from '../app/streaming/session'
 
 type AppState =
   | { phase: 'loading' }
   | { phase: 'login' }
   | { phase: 'building' }
   | { phase: 'consoles'; session: AuthSession }
-  | { phase: 'selected'; session: AuthSession; consoleId: string }
+  | { phase: 'connecting'; session: AuthSession; sessionState: SessionState }
+  | { phase: 'streaming'; session: AuthSession; streamSession: StreamSession }
   | { phase: 'error'; message: string }
 
 export default function App() {
@@ -50,6 +53,37 @@ export default function App() {
     }
   }
 
+  async function handleConsoleSelected(session: AuthSession, consoleId: string) {
+    const refreshToken = getRefreshToken()
+    if (!refreshToken) {
+      setState({ phase: 'error', message: 'No refresh token — please log in again.' })
+      return
+    }
+
+    abortRef.current?.abort()
+    const ac = new AbortController()
+    abortRef.current = ac
+
+    setState({ phase: 'connecting', session, sessionState: 'Provisioning' })
+
+    try {
+      const streamSession = await startSession(session, consoleId)
+      await pollUntilProvisioned(
+        session,
+        streamSession.sessionId,
+        refreshToken,
+        ac.signal,
+        sessionState => setState({ phase: 'connecting', session, sessionState }),
+      )
+      if (ac.signal.aborted) return
+      setState({ phase: 'streaming', session, streamSession })
+    } catch (err) {
+      if (ac.signal.aborted) return
+      if ((err as DOMException).name === 'AbortError') return
+      setState({ phase: 'error', message: (err as Error).message })
+    }
+  }
+
   if (state.phase === 'loading' || state.phase === 'building') {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -76,15 +110,25 @@ export default function App() {
     return (
       <ConsoleList
         session={state.session}
-        onSelect={consoleId => setState({ phase: 'selected', session: state.session, consoleId })}
+        onSelect={consoleId => void handleConsoleSelected(state.session, consoleId)}
       />
     )
   }
 
-  // phase === 'selected' — placeholder for Fase 3
+  if (state.phase === 'connecting') {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-muted-foreground">{state.sessionState}…</p>
+      </div>
+    )
+  }
+
+  // phase === 'streaming' — placeholder for Fase 4
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <p className="text-sm text-muted-foreground">Console selected: {state.consoleId}</p>
+      <p className="text-sm text-muted-foreground">
+        Provisioned ✓ — session {state.streamSession.sessionId}
+      </p>
     </div>
   )
 }

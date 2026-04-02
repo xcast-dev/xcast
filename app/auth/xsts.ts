@@ -62,7 +62,6 @@ async function getXHomeToken(xstsToken: string): Promise<XHomeResponse> {
   })
   const data = await res.json() as Record<string, unknown>
   if (!res.ok) throw new Error(`xHome failed ${res.status}: ${JSON.stringify(data)}`)
-  console.log('[xhome response]', JSON.stringify(data, null, 2))
   return data as unknown as XHomeResponse
 }
 

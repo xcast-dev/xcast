@@ -33,6 +33,10 @@ export function clearSession(): void {
   localStorage.removeItem(STORAGE_KEY)
 }
 
+export function getRefreshToken(): string | null {
+  return loadState()?.userToken.refresh_token ?? null
+}
+
 function loadState(): PersistedState | null {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (!raw) return null
