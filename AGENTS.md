@@ -27,7 +27,8 @@ npm run dev
 src/        React UI — components, screens, hooks
 ├── screens/
 │   ├── Login.tsx         Device Code login flow
-│   └── ConsoleList.tsx   Console selection (SmartGlass)
+│   ├── ConsoleList.tsx   Console selection (SmartGlass, gamepad navigation)
+│   └── StreamView.tsx    Video element rendering audio+video tracks
 app/        Protocol logic — no React, no UI
 ├── auth/
 │   ├── devicecode.ts     Device Code flow + token refresh
@@ -38,7 +39,7 @@ app/        Protocol logic — no React, no UI
 ├── streaming/
 │   └── session.ts        Session lifecycle (startSession, pollUntilProvisioned, startKeepalive, deleteSession)
 ├── webrtc/
-│   └── negotiation.ts    RTCPeerConnection setup, SDP offer/answer, ICE exchange
+│   └── negotiation.ts    RTCPeerConnection setup, SDP offer/answer, ICE exchange, data channels, gamepad input
 ├── channels/     Data channels (message, control, input, chat)
 ├── input/        Binary input serialization (gamepad, mouse, keyboard)
 └── render/       WebGPU renderer, audio
