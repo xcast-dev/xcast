@@ -36,8 +36,9 @@ app/        Protocol logic — no React, no UI
 ├── consoles/
 │   └── smartglass.ts     Console discovery via xccs.xboxlive.com
 ├── streaming/
-│   └── session.ts        Session lifecycle (startSession, pollUntilProvisioned, deleteSession)
-├── webrtc/       RTCPeerConnection, SDP, ICE
+│   └── session.ts        Session lifecycle (startSession, pollUntilProvisioned, startKeepalive, deleteSession)
+├── webrtc/
+│   └── negotiation.ts    RTCPeerConnection setup, SDP offer/answer, ICE exchange
 ├── channels/     Data channels (message, control, input, chat)
 ├── input/        Binary input serialization (gamepad, mouse, keyboard)
 └── render/       WebGPU renderer, audio
@@ -46,7 +47,7 @@ server/
 └── routes/
     ├── auth.ts       /auth/* (devicecode, token, xbl, xsts, xhome, purpose)
     ├── smartglass.ts /smartglass/devices
-    └── streaming.ts  /streaming/* (play, state, connect, keepalive, delete)
+    └── streaming.ts  /streaming/* (play, state, connect, keepalive, sdp, ice, delete)
 ```
 
 ## Code style
