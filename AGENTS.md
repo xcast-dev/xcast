@@ -35,13 +35,18 @@ app/        Protocol logic — no React, no UI
 │   └── persistence.ts    Session storage + lazy refresh
 ├── consoles/
 │   └── smartglass.ts     Console discovery via xccs.xboxlive.com
-├── streaming/    Session lifecycle (start, state machine, keepalive)
+├── streaming/
+│   └── session.ts        Session lifecycle (startSession, pollUntilProvisioned, deleteSession)
 ├── webrtc/       RTCPeerConnection, SDP, ICE
 ├── channels/     Data channels (message, control, input, chat)
 ├── input/        Binary input serialization (gamepad, mouse, keyboard)
 └── render/       WebGPU renderer, audio
 server/
-└── index.ts      Fastify CORS proxy (auth + SmartGlass + streaming endpoints)
+├── index.ts      Fastify setup + plugin registration
+└── routes/
+    ├── auth.ts       /auth/* (devicecode, token, xbl, xsts, xhome, purpose)
+    ├── smartglass.ts /smartglass/devices
+    └── streaming.ts  /streaming/* (play, state, connect, keepalive, delete)
 ```
 
 ## Code style
