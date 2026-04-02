@@ -9,6 +9,7 @@ import { startSession, pollUntilProvisioned, startKeepalive } from '../app/strea
 import type { SessionState, StreamSession } from '../app/streaming/session'
 import { negotiate } from '../app/webrtc/negotiation'
 import type { WebRTCResult } from '../app/webrtc/negotiation'
+import { StreamView } from '@/screens/StreamView'
 
 type AppState =
   | { phase: 'loading' }
@@ -157,12 +158,6 @@ export default function App() {
     )
   }
 
-  // phase === 'streaming' — placeholder for Fase 5 (data channels)
-  return (
-    <div className="flex min-h-screen items-center justify-center">
-      <p className="text-sm text-muted-foreground">
-        WebRTC connected ✓
-      </p>
-    </div>
-  )
+  // phase === 'streaming'
+  return <StreamView webrtc={state.webrtc} />
 }
