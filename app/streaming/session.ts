@@ -82,6 +82,25 @@ export async function pollUntilProvisioned(
   }
 }
 
+// Sends keepalive every 30s until signal is aborted. Throws on server error.
+export async function startKeepalive(
+  session:   AuthSession,
+  sessionId: string,
+  signal:    AbortSignal
+): Promise<void> {
+  while (!signal.aborted) {
+    await sleep(30_000, signal)
+    if (signal.aborted) return
+    const res = await fetch(`${SERVER}/streaming/${sessionId}/keepalive`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ baseUri: session.baseUri, gsToken: session.gsToken }),
+      signal,
+    })
+    if (!res.ok) throw new Error(`keepalive failed: ${res.status}`)
+  }
+}
+
 export async function deleteSession(session: AuthSession, sessionId: string): Promise<void> {
   await fetch(`${SERVER}/streaming/${sessionId}`, {
     method:  'DELETE',
