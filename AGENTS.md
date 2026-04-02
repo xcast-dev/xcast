@@ -21,15 +21,27 @@ npm run dev
 
 ## Project structure
 
+> **Keep this section up to date.** After every significant change (new module, new screen, new server route), update the tree below before committing.
+
 ```
 src/        React UI — components, screens, hooks
+├── screens/
+│   ├── Login.tsx         Device Code login flow
+│   └── ConsoleList.tsx   Console selection (SmartGlass)
 app/        Protocol logic — no React, no UI
-├── auth/         Authentication (Device Code, XSTS, tokens)
+├── auth/
+│   ├── devicecode.ts     Device Code flow + token refresh
+│   ├── xsts.ts           XBL → XSTS → xHome chain (AuthSession)
+│   └── persistence.ts    Session storage + lazy refresh
+├── consoles/
+│   └── smartglass.ts     Console discovery via xccs.xboxlive.com
 ├── streaming/    Session lifecycle (start, state machine, keepalive)
 ├── webrtc/       RTCPeerConnection, SDP, ICE
 ├── channels/     Data channels (message, control, input, chat)
 ├── input/        Binary input serialization (gamepad, mouse, keyboard)
 └── render/       WebGPU renderer, audio
+server/
+└── index.ts      Fastify CORS proxy (auth + SmartGlass + streaming endpoints)
 ```
 
 ## Code style
