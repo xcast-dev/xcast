@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const BUTTON_NAMES: Record<number, string> = {
   0:  'A',
@@ -24,23 +24,13 @@ export function GamepadVisualizer() {
   const [pressedButtons, setPressedButtons] = useState<string[]>([])
   const [debugInfo, setDebugInfo] = useState<string>('')
   const [gamepadConnected, setGamepadConnected] = useState(false)
+  const pressedKeyRef = useRef('')
+  const debugInfoRef = useRef('')
+  const connectedRef = useRef(false)
 
   useEffect(() => {
     let stopped = false
-
-    // Listen for gamepad connection events
-    const handleConnect = (e: GamepadEvent) => {
-      console.log('Gamepad connected:', e.gamepad.id)
-      setGamepadConnected(true)
-    }
-    
-    const handleDisconnect = () => {
-      console.log('Gamepad disconnected')
-      setGamepadConnected(false)
-    }
-
-    window.addEventListener('gamepadconnected', handleConnect)
-    window.addEventListener('gamepaddisconnected', handleDisconnect)
+    let frameId = 0
 
     const tick = () => {
       if (stopped) return
@@ -54,7 +44,10 @@ export function GamepadVisualizer() {
       })
       
       if (gp) {
-        setGamepadConnected(true)
+        if (!connectedRef.current) {
+          connectedRef.current = true
+          setGamepadConnected(true)
+        }
         const pressed: string[] = []
         const rawPressed: number[] = []
         
@@ -108,28 +101,39 @@ export function GamepadVisualizer() {
         const name = gp.id.includes('Xbox') ? 'Xbox Controller' 
           : gp.id.includes('045e') ? 'Xbox Controller'
           : gp.id.split('(')[0].trim()
-        setDebugInfo(name)
-        
-        if (rawPressed.length > 0) {
-          console.log('Raw button indices pressed:', rawPressed, 'Axes:', axes.map(a => a.toFixed(2)))
+        if (name !== debugInfoRef.current) {
+          debugInfoRef.current = name
+          setDebugInfo(name)
         }
-        
-        setPressedButtons(pressed)
+
+        const pressedKey = pressed.join('|')
+        if (pressedKey !== pressedKeyRef.current) {
+          pressedKeyRef.current = pressedKey
+          setPressedButtons(pressed)
+        }
       } else {
-        setDebugInfo('')
-        setGamepadConnected(false)
-        setPressedButtons([])
+        if (debugInfoRef.current !== '') {
+          debugInfoRef.current = ''
+          setDebugInfo('')
+        }
+        if (connectedRef.current) {
+          connectedRef.current = false
+          setGamepadConnected(false)
+        }
+        if (pressedKeyRef.current !== '') {
+          pressedKeyRef.current = ''
+          setPressedButtons([])
+        }
       }
 
-      requestAnimationFrame(tick)
+      frameId = requestAnimationFrame(tick)
     }
 
-    tick()
-    
-    return () => { 
+    frameId = requestAnimationFrame(tick)
+
+    return () => {
       stopped = true
-      window.removeEventListener('gamepadconnected', handleConnect)
-      window.removeEventListener('gamepaddisconnected', handleDisconnect)
+      cancelAnimationFrame(frameId)
     }
   }, [])
 

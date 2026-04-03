@@ -42,11 +42,16 @@ export function ConsoleList({ session, onSelect }: ConsoleListProps) {
   useEffect(() => {
     let frameId = 0
     let prevUp = false, prevDown = false, prevSelect = false
+    let prevConnected = false
 
     const tick = () => {
       const gp = Array.from(navigator.getGamepads()).find((g): g is Gamepad => !!g && g.connected)
 
-      setGamepadConnected(!!gp)
+      const connected = !!gp
+      if (connected !== prevConnected) {
+        prevConnected = connected
+        setGamepadConnected(connected)
+      }
 
       if (gp) {
         const up     = !!gp.buttons[12]?.pressed || (gp.axes[1] ?? 0) < -0.6

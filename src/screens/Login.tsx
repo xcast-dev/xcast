@@ -15,7 +15,6 @@ type State =
   | { status: 'error'; message: string }
 
 export function Login({ onAuthenticated }: LoginProps) {
-  'use no memo'
   const [state, setState] = useState<State>({ status: 'loading' })
   const abortRef = useRef<AbortController | null>(null)
 
