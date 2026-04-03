@@ -3,6 +3,7 @@ import { requestDeviceCode, pollForToken } from '../../app/auth/devicecode'
 import type { UserToken } from '../../app/auth/devicecode'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { GamepadVisualizer } from '@/components/GamepadVisualizer'
 
 interface LoginProps {
   onAuthenticated: (token: UserToken) => void
@@ -48,7 +49,7 @@ export function Login({ onAuthenticated }: LoginProps) {
   }, [])
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-screen items-center justify-center gap-8 p-8">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Sign in to Xbox</CardTitle>
@@ -77,6 +78,8 @@ export function Login({ onAuthenticated }: LoginProps) {
           )}
         </CardContent>
       </Card>
+      
+      <GamepadVisualizer />
     </div>
   )
 }

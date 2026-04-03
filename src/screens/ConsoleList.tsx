@@ -5,6 +5,7 @@ import type { XboxConsole } from '../../app/consoles/smartglass'
 import type { AuthSession } from '../../app/auth/xsts'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { GamepadVisualizer } from '@/components/GamepadVisualizer'
 
 interface ConsoleListProps {
   session:  AuthSession
@@ -75,7 +76,7 @@ export function ConsoleList({ session, onSelect }: ConsoleListProps) {
   const consoles = state.status === 'ready' ? state.consoles : []
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex flex-col min-h-screen items-center justify-center gap-8 p-8">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Select a console</CardTitle>
@@ -110,6 +111,8 @@ export function ConsoleList({ session, onSelect }: ConsoleListProps) {
           ))}
         </CardContent>
       </Card>
+      
+      <GamepadVisualizer />
     </div>
   )
 }
