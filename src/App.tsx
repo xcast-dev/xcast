@@ -13,6 +13,7 @@ import { reconnect } from '../app/streaming/reconnect'
 import { StreamView } from '@/screens/StreamView'
 
 type ConnectionStatus = 'Conectando' | 'Activo' | 'Reconectando'
+type ReconnectCause = 'freeze-webgpu' | 'freeze-video-fallback' | 'pc-failed' | 'keepalive'
 
 type AppState =
   | { phase: 'loading' }
@@ -30,6 +31,8 @@ type AppState =
       streamSession: StreamSession
       webrtc: WebRTCResult
       connectionStatus: ConnectionStatus
+      reconnectCause?: ReconnectCause
+      reconnectAttempt?: number
     }
   | { phase: 'error'; message: string }
 
@@ -37,6 +40,10 @@ export default function App() {
   const [state, setState] = useState<AppState>({ phase: 'loading' })
   const abortRef = useRef<AbortController | null>(null)
   const reconnectingRef = useRef(false)
+
+  function reconnectDelayMs(attempt: number): number {
+    return attempt <= 1 ? 500 : attempt === 2 ? 1500 : 3000
+  }
 
   useEffect(() => {
     const ac = new AbortController()
@@ -113,10 +120,18 @@ export default function App() {
 
       startKeepalive(session, streamSession.sessionId, ac.signal).catch(err => {
         if ((err as DOMException).name === 'AbortError') return
-        setState({ phase: 'error', message: (err as Error).message })
+        console.error('[RECONNECT] keepalive failure', err)
+        void handleStreamFrozen(session, streamSession, consoleId, webrtc, 'keepalive')
       })
 
-      setState({ phase: 'streaming', session, consoleId, streamSession, webrtc, connectionStatus: 'Activo' })
+      setState({
+        phase: 'streaming',
+        session,
+        consoleId,
+        streamSession,
+        webrtc,
+        connectionStatus: 'Activo',
+      })
     } catch (err) {
       if (ac.signal.aborted) return
       if ((err as DOMException).name === 'AbortError') return
@@ -128,7 +143,8 @@ export default function App() {
     session: AuthSession,
     streamSession: StreamSession,
     consoleId: string,
-    currentWebrtc: WebRTCResult
+    currentWebrtc: WebRTCResult,
+    cause: ReconnectCause
   ) {
     if (reconnectingRef.current) return
     reconnectingRef.current = true
@@ -148,36 +164,66 @@ export default function App() {
 
     setState(prev => {
       if (prev.phase !== 'streaming') return prev
-      return { ...prev, connectionStatus: 'Reconectando' }
+      return { ...prev, connectionStatus: 'Reconectando', reconnectCause: cause, reconnectAttempt: 1 }
     })
 
     try {
-      const result = await reconnect({
-        authSession: session,
-        refreshToken,
-        consoleId,
-        oldStreamSession: streamSession,
-        signal: ac.signal,
-      })
-      if (ac.signal.aborted) return
+      let oldStreamSession: StreamSession | undefined = streamSession
+      let lastError: unknown = null
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        setState(prev => {
+          if (prev.phase !== 'streaming') return prev
+          return { ...prev, reconnectAttempt: attempt, reconnectCause: cause, connectionStatus: 'Reconectando' }
+        })
+        try {
+          console.warn(`[RECONNECT] attempt ${attempt}/3 cause=${cause}`)
+          const result = await reconnect({
+            authSession: session,
+            refreshToken,
+            consoleId,
+            oldStreamSession,
+            signal: ac.signal,
+          })
+          if (ac.signal.aborted) return
 
-      startKeepalive(session, result.streamSession.sessionId, ac.signal).catch(err => {
-        if ((err as DOMException).name === 'AbortError') return
-        setState({ phase: 'error', message: (err as Error).message })
-      })
+          startKeepalive(session, result.streamSession.sessionId, ac.signal).catch(err => {
+            if ((err as DOMException).name === 'AbortError') return
+            console.error('[RECONNECT] keepalive failure', err)
+            void handleStreamFrozen(session, result.streamSession, consoleId, result.webrtc, 'keepalive')
+          })
 
-      setState({
-        phase: 'streaming',
-        session,
-        consoleId,
-        streamSession: result.streamSession,
-        webrtc: result.webrtc,
-        connectionStatus: 'Activo',
-      })
+          setState({
+            phase: 'streaming',
+            session,
+            consoleId,
+            streamSession: result.streamSession,
+            webrtc: result.webrtc,
+            connectionStatus: 'Activo',
+          })
+          return
+        } catch (err) {
+          lastError = err
+          oldStreamSession = undefined
+          if (ac.signal.aborted) return
+          if ((err as DOMException).name === 'AbortError') return
+          if (attempt < 3) {
+            const delay = reconnectDelayMs(attempt)
+            await new Promise<void>((resolve, reject) => {
+              const timer = window.setTimeout(resolve, delay)
+              ac.signal.addEventListener('abort', () => {
+                window.clearTimeout(timer)
+                reject(new DOMException('Aborted', 'AbortError'))
+              }, { once: true })
+            })
+          }
+        }
+      }
+
+      throw lastError instanceof Error ? lastError : new Error('Reconnect failed after 3 attempts')
     } catch (err) {
       if (ac.signal.aborted) return
       if ((err as DOMException).name === 'AbortError') return
-      setState({ phase: 'error', message: (err as Error).message })
+      setState({ phase: 'error', message: `Reconnect (${cause}) failed: ${(err as Error).message}` })
     } finally {
       reconnectingRef.current = false
     }
@@ -233,9 +279,15 @@ export default function App() {
     <StreamView
       webrtc={state.webrtc}
       connectionStatus={state.connectionStatus}
-      onStreamFrozen={() => {
+      connectionDetail={
+        state.connectionStatus === 'Reconectando'
+          ? `${state.reconnectCause ?? 'unknown'}${state.reconnectAttempt ? ` (intento ${state.reconnectAttempt}/3)` : ''}`
+          : undefined
+      }
+      onStreamFrozen={(cause) => {
         if (state.connectionStatus !== 'Activo') return
-        void handleStreamFrozen(state.session, state.streamSession, state.consoleId, state.webrtc)
+        console.warn(`[RECONNECT] trigger cause=${cause}`)
+        void handleStreamFrozen(state.session, state.streamSession, state.consoleId, state.webrtc, cause)
       }}
     />
   )

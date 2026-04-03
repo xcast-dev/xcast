@@ -10,6 +10,7 @@ export class FrameWatchdog {
   private readonly onFrozen: (lastFrameAge: number) => void
   private timerId = 0
   private active = false
+  private paused = false
   private lastFrameTime = 0
   private frozenTriggered = false
 
@@ -27,10 +28,11 @@ export class FrameWatchdog {
   start(): void {
     if (this.active) return
     this.active = true
+    this.paused = false
     this.lastFrameTime = performance.now()
     this.frozenTriggered = false
     this.timerId = window.setInterval(() => {
-      if (!this.active || this.frozenTriggered) return
+      if (!this.active || this.paused || this.frozenTriggered) return
       const age = performance.now() - this.lastFrameTime
       if (age >= this.thresholdMs) {
         this.frozenTriggered = true
@@ -41,10 +43,23 @@ export class FrameWatchdog {
 
   stop(): void {
     this.active = false
+    this.paused = false
     this.frozenTriggered = false
     if (this.timerId) {
       window.clearInterval(this.timerId)
       this.timerId = 0
     }
+  }
+
+  pause(): void {
+    if (!this.active) return
+    this.paused = true
+  }
+
+  resume(): void {
+    if (!this.active) return
+    this.paused = false
+    this.lastFrameTime = performance.now()
+    this.frozenTriggered = false
   }
 }

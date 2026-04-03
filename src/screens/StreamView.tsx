@@ -5,7 +5,8 @@ import { FrameWatchdog } from '../../app/webrtc/watchdog'
 interface StreamViewProps {
   webrtc: WebRTCResult
   connectionStatus: 'Conectando' | 'Activo' | 'Reconectando'
-  onStreamFrozen: () => void
+  connectionDetail?: string
+  onStreamFrozen: (cause: 'freeze-webgpu' | 'freeze-video-fallback' | 'pc-failed') => void
 }
 
 type VideoTrackProcessor = {
@@ -21,7 +22,7 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
   return api.MediaStreamTrackProcessor ?? null
 }
 
-export function StreamView({ webrtc, connectionStatus, onStreamFrozen }: StreamViewProps) {
+export function StreamView({ webrtc, connectionStatus, connectionDetail, onStreamFrozen }: StreamViewProps) {
   const [useVideoFallback, setUseVideoFallback] = useState(false)
   const [metricsOverlay, setMetricsOverlay] = useState('')
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true)
@@ -80,7 +81,7 @@ export function StreamView({ webrtc, connectionStatus, onStreamFrozen }: StreamV
     const watchdog = new FrameWatchdog({
       thresholdMs: 3000,
       checkIntervalMs: 1000,
-      onFrozen: () => onStreamFrozen(),
+      onFrozen: () => onStreamFrozen('freeze-webgpu'),
     })
     let lastCanvasWidth = 0
     let lastCanvasHeight = 0
@@ -116,6 +117,8 @@ export function StreamView({ webrtc, connectionStatus, onStreamFrozen }: StreamV
         let pausedByVisibility = document.visibilityState === 'hidden'
         onVisibilityChange = () => {
           pausedByVisibility = document.visibilityState === 'hidden'
+          if (pausedByVisibility) watchdog.pause()
+          else watchdog.resume()
         }
         document.addEventListener('visibilitychange', onVisibilityChange)
 
@@ -206,6 +209,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         reader = processor.readable.getReader()
         setUseVideoFallback(false)
         watchdog.start()
+        if (document.visibilityState === 'hidden') watchdog.pause()
 
         metricsTimer = window.setInterval(() => {
           if (!metrics.rendered && !metrics.dropped) return
@@ -360,12 +364,29 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
   }, [webrtc.videoTrack, onStreamFrozen])
 
   useEffect(() => {
+    const pc = webrtc.pc
+    const onConnectionStateChange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        onStreamFrozen('pc-failed')
+      }
+    }
+    pc.addEventListener('connectionstatechange', onConnectionStateChange)
+    return () => pc.removeEventListener('connectionstatechange', onConnectionStateChange)
+  }, [webrtc.pc, onStreamFrozen])
+
+  useEffect(() => {
     const el = videoRef.current
     if (!el) return
 
     if (!useVideoFallback) {
       el.srcObject = null
       return
+    }
+
+    let lastFrameTime = performance.now()
+    let watchdogTimer = 0
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') lastFrameTime = performance.now()
     }
 
     let active = true
@@ -385,13 +406,28 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
       }
       const onFrame: VideoFrameRequestCallback = () => {
         if (!active) return
+        lastFrameTime = performance.now()
         frameCallbackId = withRvfc.requestVideoFrameCallback(onFrame)
       }
       frameCallbackId = withRvfc.requestVideoFrameCallback(onFrame)
     }
+    const onTimeUpdate = () => {
+      lastFrameTime = performance.now()
+    }
+    el.addEventListener('timeupdate', onTimeUpdate)
+    watchdogTimer = window.setInterval(() => {
+      if (!active || document.visibilityState === 'hidden') return
+      if (performance.now() - lastFrameTime >= 3000) {
+        onStreamFrozen('freeze-video-fallback')
+      }
+    }, 1000)
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
       active = false
+      if (watchdogTimer) window.clearInterval(watchdogTimer)
+      el.removeEventListener('timeupdate', onTimeUpdate)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       if (frameCallbackId && 'cancelVideoFrameCallback' in el) {
         ;(el as HTMLVideoElement & { cancelVideoFrameCallback: (handle: number) => void })
           .cancelVideoFrameCallback(frameCallbackId)
@@ -416,6 +452,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
       <div className="absolute right-3 top-3 rounded bg-black/70 px-3 py-1 text-xs text-white shadow">
         {connectionStatus}
       </div>
+      {connectionDetail ? (
+        <div className="absolute right-3 top-10 rounded bg-black/70 px-3 py-1 text-xs text-white/80 shadow">
+          {connectionDetail}
+        </div>
+      ) : null}
       {!useVideoFallback && showMetricsOverlay && metricsOverlay && (
         <div className="absolute left-3 top-3 max-w-[calc(100vw-2rem)] rounded bg-black/70 px-3 py-2 font-mono text-xs text-emerald-300 shadow">
           {metricsOverlay}
