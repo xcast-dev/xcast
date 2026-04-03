@@ -76,9 +76,12 @@ function buildClientMetadata(seq: number): ArrayBuffer {
 }
 
 function normalizeAxis(value: number): number {
-  const dz = 0.2
-  if (Math.abs(value) < dz) return 0
-  return (value - Math.sign(value) * dz) / (1 - dz)
+  const deadzone = 0.12
+  const abs = Math.abs(value)
+  if (abs < deadzone) return 0
+  const normalized = (abs - deadzone) / (1 - deadzone)
+  const curved = Math.pow(normalized, 0.75)
+  return Math.sign(value) * curved
 }
 
 function normalizeTrigger(value: number): number {
@@ -146,6 +149,8 @@ function isPreferredGamepad(g: Gamepad): boolean {
 function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChannel, seqRef: { value: number }, signal: AbortSignal): void {
   let stopped = false
   let last: Uint8Array | null = null
+  let pending: ArrayBuffer | null = null
+  let flushScheduled = false
   let registeredIndex = -1
   let rafId = 0
 
@@ -156,6 +161,24 @@ function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChanne
 
   signal.addEventListener('abort', stop, { once: true })
   channel.addEventListener('close', stop, { once: true })
+
+  const flushPending = () => {
+    flushScheduled = false
+    if (stopped || channel.readyState !== 'open') return
+    if (channel.bufferedAmount > 8192) {
+      scheduleFlush()
+      return
+    }
+    if (!pending) return
+    channel.send(pending)
+    pending = null
+  }
+
+  const scheduleFlush = () => {
+    if (flushScheduled) return
+    flushScheduled = true
+    queueMicrotask(flushPending)
+  }
 
   const tick = () => {
     if (stopped || channel.readyState !== 'open') return
@@ -171,7 +194,8 @@ function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChanne
       }
       const data = buildGamepadData(gp)
       if (!last || data.some((b, i) => b !== last![i])) {
-        channel.send(wrapInputFrame(data, 2 /* Gamepad */, seqRef.value++))
+        pending = wrapInputFrame(data, 2 /* Gamepad */, seqRef.value++)
+        scheduleFlush()
         last = data
       }
     }
