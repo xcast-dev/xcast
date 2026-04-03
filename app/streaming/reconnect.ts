@@ -21,6 +21,16 @@ export async function reconnect(context: ReconnectContext): Promise<ReconnectRes
   const { authSession, refreshToken, consoleId, oldStreamSession, signal } = context
 
   if (oldStreamSession) {
+    try {
+      await pollUntilProvisioned(authSession, oldStreamSession.sessionId, refreshToken, signal)
+      const resumedWebrtc = await negotiate(authSession, oldStreamSession, signal)
+      return { streamSession: oldStreamSession, webrtc: resumedWebrtc }
+    } catch {
+      // Resume-first: if existing session is no longer usable, fall back to a fresh session below.
+    }
+  }
+
+  if (oldStreamSession) {
     await deleteSession(authSession, oldStreamSession.sessionId).catch(() => undefined)
   }
 
