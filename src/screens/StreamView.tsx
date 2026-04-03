@@ -20,9 +20,21 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
 
 export function StreamView({ webrtc }: StreamViewProps) {
   const [useVideoFallback, setUseVideoFallback] = useState(false)
+  const [metricsOverlay, setMetricsOverlay] = useState('')
+  const [showMetricsOverlay, setShowMetricsOverlay] = useState(true)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return
+      if (event.key.toLowerCase() !== 'h') return
+      setShowMetricsOverlay(prev => !prev)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   useEffect(() => {
     const el = audioRef.current
@@ -56,6 +68,9 @@ export function StreamView({ webrtc }: StreamViewProps) {
     let reader: ReadableStreamDefaultReader<VideoFrame> | null = null
     let context: GPUCanvasContext | null = null
     let onResize: (() => void) | null = null
+    let onVisibilityChange: (() => void) | null = null
+    let onUncapturedError: ((event: GPUUncapturedErrorEvent) => void) | null = null
+    let device: GPUDevice | null = null
     let latestFrame: VideoFrame | null = null
     let rafId = 0
     let metricsTimer = 0
@@ -77,7 +92,25 @@ export function StreamView({ webrtc }: StreamViewProps) {
         const adapter = await gpu.requestAdapter()
         if (!adapter) throw new Error('No WebGPU adapter available')
 
-        const device = await adapter.requestDevice()
+        device = await adapter.requestDevice()
+        const gpuDevice = device
+        device.lost.then(info => {
+          if (!active) return
+          console.warn('WebGPU device lost, switching to video fallback:', info.message)
+          setUseVideoFallback(true)
+        })
+        onUncapturedError = event => {
+          if (!active) return
+          console.warn('WebGPU uncaptured error:', event.error.message)
+        }
+        device.addEventListener('uncapturederror', onUncapturedError)
+
+        let pausedByVisibility = document.visibilityState === 'hidden'
+        onVisibilityChange = () => {
+          pausedByVisibility = document.visibilityState === 'hidden'
+        }
+        document.addEventListener('visibilitychange', onVisibilityChange)
+
         context = canvas.getContext('webgpu')
         if (!context) throw new Error('Failed to get WebGPU canvas context')
 
@@ -91,10 +124,10 @@ export function StreamView({ webrtc }: StreamViewProps) {
           if (width === lastCanvasWidth && height === lastCanvasHeight) return
           canvas.width = width
           canvas.height = height
-          lastCanvasWidth = width
-          lastCanvasHeight = height
-          context.configure({
-            device,
+            lastCanvasWidth = width
+            lastCanvasHeight = height
+            context.configure({
+            device: gpuDevice,
             format,
             alphaMode: 'opaque',
           })
@@ -169,12 +202,33 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
           if (!metrics.rendered && !metrics.dropped) return
           const avgCopy = metrics.rendered ? metrics.copyMs / metrics.rendered : 0
           const avgRender = metrics.rendered ? metrics.renderMs / metrics.rendered : 0
-          console.debug('[webgpu]', {
-            rendered: metrics.rendered,
-            dropped: metrics.dropped,
-            avgCopyMs: Number(avgCopy.toFixed(3)),
-            avgRenderMs: Number(avgRender.toFixed(3)),
-          })
+          const rendered = metrics.rendered
+          const dropped = metrics.dropped
+          const avgCopyMs = Number(avgCopy.toFixed(3))
+          const avgRenderMs = Number(avgRender.toFixed(3))
+          const fps = Number((rendered / 2).toFixed(1))
+          const dropPct = rendered + dropped > 0 ? Number(((dropped / (rendered + dropped)) * 100).toFixed(1)) : 0
+          const queueLag = latestFrame ? 1 : 0
+          const resolution = `${lastCanvasWidth}x${lastCanvasHeight}`
+          const vis = document.visibilityState === 'visible' ? 'active' : 'paused'
+          const renderer = useVideoFallback ? 'video-fallback' : 'webgpu'
+          setMetricsOverlay(
+            `${renderer} | ${vis} | ${resolution} | ${fps}fps | drop ${dropPct}% (${dropped}) | copy ${avgCopyMs}ms | render ${avgRenderMs}ms | queue ${queueLag}`
+          )
+          if (import.meta.env.DEV) {
+            console.debug('[webgpu]', {
+              renderer,
+              vis,
+              resolution,
+              fps,
+              rendered,
+              dropped,
+              dropPct,
+              avgCopyMs,
+              avgRenderMs,
+              queueLag,
+            })
+          }
           metrics.copyMs = 0
           metrics.renderMs = 0
           metrics.rendered = 0
@@ -195,6 +249,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
         const renderLoop = () => {
           if (!active) return
+          if (pausedByVisibility) {
+            rafId = requestAnimationFrame(renderLoop)
+            return
+          }
           metrics.loops += 1
 
           if (latestFrame && context) {
@@ -206,7 +264,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
             let resource = resourcesBySize.get(key)
             if (!resource) {
-              const texture = device.createTexture({
+              const texture = gpuDevice.createTexture({
                 size: [width, height],
                 format: 'rgba8unorm',
                 usage:
@@ -214,7 +272,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                   GPUTextureUsage.COPY_DST |
                   GPUTextureUsage.RENDER_ATTACHMENT,
               })
-              const bindGroup = device.createBindGroup({
+              const bindGroup = gpuDevice.createBindGroup({
                 layout: pipeline.getBindGroupLayout(0),
                 entries: [
                   { binding: 0, resource: texture.createView() },
@@ -227,7 +285,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             currentResource = resource
 
             const copyStart = performance.now()
-            device.queue.copyExternalImageToTexture(
+            gpuDevice.queue.copyExternalImageToTexture(
               { source: frame },
               { texture: currentResource.texture },
               [width, height]
@@ -235,7 +293,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             metrics.copyMs += performance.now() - copyStart
 
             const renderStart = performance.now()
-            const encoder = device.createCommandEncoder()
+            const encoder = gpuDevice.createCommandEncoder()
             const pass = encoder.beginRenderPass({
               colorAttachments: [
                 {
@@ -250,7 +308,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             pass.setBindGroup(0, currentResource.bindGroup)
             pass.draw(4)
             pass.end()
-            device.queue.submit([encoder.finish()])
+            gpuDevice.queue.submit([encoder.finish()])
             metrics.renderMs += performance.now() - renderStart
             metrics.rendered += 1
 
@@ -273,6 +331,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     return () => {
       active = false
+      setMetricsOverlay('')
+      if (onVisibilityChange) document.removeEventListener('visibilitychange', onVisibilityChange)
+      if (device && onUncapturedError) device.removeEventListener('uncapturederror', onUncapturedError)
       if (onResize) window.removeEventListener('resize', onResize)
       if (metricsTimer) window.clearInterval(metricsTimer)
       if (rafId) cancelAnimationFrame(rafId)
@@ -329,7 +390,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
   }, [useVideoFallback, webrtc.videoTrack])
 
   return (
-    <div className="h-screen w-screen bg-black flex items-center justify-center p-4">
+    <div className="relative h-screen w-screen bg-black flex items-center justify-center">
       <canvas
         ref={canvasRef}
         className={useVideoFallback ? 'hidden' : 'w-full max-w-[177.78vh] aspect-video bg-black'}
@@ -341,6 +402,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         muted
       />
       <audio ref={audioRef} hidden />
+      {!useVideoFallback && showMetricsOverlay && metricsOverlay && (
+        <div className="absolute left-3 top-3 max-w-[calc(100vw-2rem)] rounded bg-black/70 px-3 py-2 font-mono text-xs text-emerald-300 shadow">
+          {metricsOverlay}
+        </div>
+      )}
     </div>
   )
 }
