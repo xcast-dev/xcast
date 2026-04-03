@@ -11,11 +11,19 @@ export function StreamView({ webrtc }: StreamViewProps) {
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
+    let active = true
     const stream = new MediaStream([webrtc.audioTrack, webrtc.videoTrack])
     el.srcObject = stream
-    void el.play()
-    return () => { el.srcObject = null }
-  }, [webrtc])
+    void el.play().catch(err => {
+      if (!active) return
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      console.warn('Video autoplay failed:', err)
+    })
+    return () => {
+      active = false
+      el.srcObject = null
+    }
+  }, [webrtc.audioTrack, webrtc.videoTrack])
 
   return (
     <video

@@ -65,7 +65,6 @@ function sendControlAuth(control: RTCDataChannel): void {
   control.send(JSON.stringify({ message: 'gamepadChanged', gamepadIndex: 0, wasAdded: false }))
 }
 
-// Binary input frames — little-endian, matching Xbox wire format.
 function buildClientMetadata(seq: number): ArrayBuffer {
   const buf = new ArrayBuffer(15)
   const v = new DataView(buf)
@@ -134,17 +133,35 @@ function wrapInputFrame(data: Uint8Array, reportType: number, seq: number): Arra
   return buf
 }
 
+function isPreferredGamepad(g: Gamepad): boolean {
+  const id = g.id.toLowerCase()
+  return (
+    id.includes('xbox') ||
+    id.includes('xinput') ||
+    id.includes('wireless controller') ||
+    id.includes('vendor: 045e')
+  )
+}
+
 function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChannel, seqRef: { value: number }, signal: AbortSignal): void {
   let stopped = false
   let last: Uint8Array | null = null
   let registeredIndex = -1
+  let rafId = 0
 
-  signal.addEventListener('abort', () => { stopped = true }, { once: true })
-  channel.addEventListener('close', () => { stopped = true }, { once: true })
+  const stop = () => {
+    stopped = true
+    if (rafId) cancelAnimationFrame(rafId)
+  }
+
+  signal.addEventListener('abort', stop, { once: true })
+  channel.addEventListener('close', stop, { once: true })
 
   const tick = () => {
     if (stopped || channel.readyState !== 'open') return
-    const gp = Array.from(navigator.getGamepads()).find((g): g is Gamepad => !!g && g.connected)
+    const gp = Array.from(navigator.getGamepads())
+      .filter((g): g is Gamepad => !!g && g.connected)
+      .find(isPreferredGamepad)
     if (!gp) {
       registeredIndex = -1
     } else {
@@ -158,7 +175,7 @@ function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChanne
         last = data
       }
     }
-    window.setTimeout(tick, 16)
+    rafId = requestAnimationFrame(tick)
   }
   tick()
 }
