@@ -13,7 +13,7 @@ import { reconnect } from '../app/streaming/reconnect'
 import { StreamView } from '@/screens/StreamView'
 
 type ConnectionStatus = 'Conectando' | 'Activo' | 'Reconectando'
-type ReconnectCause = 'freeze-webgpu' | 'freeze-video-fallback' | 'pc-failed' | 'keepalive'
+type ReconnectCause = 'pc-failed' | 'keepalive' | 'context-resume' | 'online-resume'
 
 type AppState =
   | { phase: 'loading' }
@@ -229,6 +229,97 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    if (state.phase !== 'streaming') return
+    const { session, streamSession, consoleId, webrtc, connectionStatus } = state
+
+    let shouldReconnectAfterResume = false
+    let offlineDetected = false
+    let disconnectedTimer = 0
+
+    const triggerReconnect = (cause: ReconnectCause) => {
+      if (reconnectingRef.current) return
+      if (connectionStatus !== 'Activo') return
+      console.warn(`[RECONNECT] trigger cause=${cause}`)
+      void handleStreamFrozen(session, streamSession, consoleId, webrtc, cause)
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        shouldReconnectAfterResume = true
+        return
+      }
+      if (shouldReconnectAfterResume) {
+        shouldReconnectAfterResume = false
+        triggerReconnect('context-resume')
+      }
+    }
+
+    const onBlur = () => {
+      shouldReconnectAfterResume = true
+    }
+
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return
+      if (shouldReconnectAfterResume) {
+        shouldReconnectAfterResume = false
+        triggerReconnect('context-resume')
+      }
+    }
+
+    const onOffline = () => {
+      offlineDetected = true
+    }
+
+    const onOnline = () => {
+      if (!offlineDetected) return
+      offlineDetected = false
+      triggerReconnect('online-resume')
+    }
+
+    const onConnectionStateChange = () => {
+      if (webrtc.pc.connectionState === 'failed') {
+        triggerReconnect('pc-failed')
+        return
+      }
+      if (webrtc.pc.connectionState === 'disconnected') {
+        if (disconnectedTimer) window.clearTimeout(disconnectedTimer)
+        disconnectedTimer = window.setTimeout(() => {
+          if (webrtc.pc.connectionState === 'disconnected') triggerReconnect('pc-failed')
+        }, 5000)
+        return
+      }
+      if (disconnectedTimer) {
+        window.clearTimeout(disconnectedTimer)
+        disconnectedTimer = 0
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('offline', onOffline)
+    window.addEventListener('online', onOnline)
+    webrtc.pc.addEventListener('connectionstatechange', onConnectionStateChange)
+
+    return () => {
+      if (disconnectedTimer) window.clearTimeout(disconnectedTimer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('offline', onOffline)
+      window.removeEventListener('online', onOnline)
+      webrtc.pc.removeEventListener('connectionstatechange', onConnectionStateChange)
+    }
+  }, [
+    state.phase,
+    state.phase === 'streaming' ? state.session : null,
+    state.phase === 'streaming' ? state.streamSession : null,
+    state.phase === 'streaming' ? state.consoleId : null,
+    state.phase === 'streaming' ? state.webrtc : null,
+    state.phase === 'streaming' ? state.connectionStatus : null,
+  ])
+
   if (state.phase === 'loading' || state.phase === 'building') {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -284,11 +375,6 @@ export default function App() {
           ? `${state.reconnectCause ?? 'unknown'}${state.reconnectAttempt ? ` (intento ${state.reconnectAttempt}/3)` : ''}`
           : undefined
       }
-      onStreamFrozen={(cause) => {
-        if (state.connectionStatus !== 'Activo') return
-        console.warn(`[RECONNECT] trigger cause=${cause}`)
-        void handleStreamFrozen(state.session, state.streamSession, state.consoleId, state.webrtc, cause)
-      }}
     />
   )
 }
