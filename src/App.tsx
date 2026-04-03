@@ -9,23 +9,34 @@ import { startSession, pollUntilProvisioned, startKeepalive } from '../app/strea
 import type { SessionState, StreamSession } from '../app/streaming/session'
 import { negotiate } from '../app/webrtc/negotiation'
 import type { WebRTCResult } from '../app/webrtc/negotiation'
+import { reconnect } from '../app/streaming/reconnect'
 import { StreamView } from '@/screens/StreamView'
+
+type ConnectionStatus = 'Conectando' | 'Activo' | 'Reconectando'
 
 type AppState =
   | { phase: 'loading' }
   | { phase: 'login' }
   | { phase: 'building' }
   | { phase: 'consoles'; session: AuthSession }
-  | { phase: 'connecting'; session: AuthSession; sessionState: SessionState }
-  | { phase: 'negotiating-sdp'; session: AuthSession; streamSession: StreamSession }
-  | { phase: 'negotiating-ice'; session: AuthSession; streamSession: StreamSession }
-  | { phase: 'waiting-connection'; session: AuthSession; streamSession: StreamSession }
-  | { phase: 'streaming'; session: AuthSession; streamSession: StreamSession; webrtc: WebRTCResult }
+  | { phase: 'connecting'; session: AuthSession; consoleId: string; sessionState: SessionState }
+  | { phase: 'negotiating-sdp'; session: AuthSession; consoleId: string; streamSession: StreamSession }
+  | { phase: 'negotiating-ice'; session: AuthSession; consoleId: string; streamSession: StreamSession }
+  | { phase: 'waiting-connection'; session: AuthSession; consoleId: string; streamSession: StreamSession }
+  | {
+      phase: 'streaming'
+      session: AuthSession
+      consoleId: string
+      streamSession: StreamSession
+      webrtc: WebRTCResult
+      connectionStatus: ConnectionStatus
+    }
   | { phase: 'error'; message: string }
 
 export default function App() {
   const [state, setState] = useState<AppState>({ phase: 'loading' })
   const abortRef = useRef<AbortController | null>(null)
+  const reconnectingRef = useRef(false)
 
   useEffect(() => {
     const ac = new AbortController()
@@ -70,7 +81,7 @@ export default function App() {
     const ac = new AbortController()
     abortRef.current = ac
 
-    setState({ phase: 'connecting', session, sessionState: 'Provisioning' })
+    setState({ phase: 'connecting', session, consoleId, sessionState: 'Provisioning' })
 
     try {
       const streamSession = await startSession(session, consoleId)
@@ -79,11 +90,11 @@ export default function App() {
         streamSession.sessionId,
         refreshToken,
         ac.signal,
-        sessionState => setState({ phase: 'connecting', session, sessionState }),
+        sessionState => setState({ phase: 'connecting', session, consoleId, sessionState }),
       )
       if (ac.signal.aborted) return
 
-      setState({ phase: 'negotiating-sdp', session, streamSession })
+      setState({ phase: 'negotiating-sdp', session, consoleId, streamSession })
 
       const webrtc = await negotiate(
         session,
@@ -92,9 +103,9 @@ export default function App() {
         // Progress callbacks
         (phase) => {
           if (phase === 'ice-exchange') {
-            setState({ phase: 'negotiating-ice', session, streamSession })
+            setState({ phase: 'negotiating-ice', session, consoleId, streamSession })
           } else if (phase === 'waiting-tracks') {
-            setState({ phase: 'waiting-connection', session, streamSession })
+            setState({ phase: 'waiting-connection', session, consoleId, streamSession })
           }
         }
       )
@@ -105,11 +116,70 @@ export default function App() {
         setState({ phase: 'error', message: (err as Error).message })
       })
 
-      setState({ phase: 'streaming', session, streamSession, webrtc })
+      setState({ phase: 'streaming', session, consoleId, streamSession, webrtc, connectionStatus: 'Activo' })
     } catch (err) {
       if (ac.signal.aborted) return
       if ((err as DOMException).name === 'AbortError') return
       setState({ phase: 'error', message: (err as Error).message })
+    }
+  }
+
+  async function handleStreamFrozen(
+    session: AuthSession,
+    streamSession: StreamSession,
+    consoleId: string,
+    currentWebrtc: WebRTCResult
+  ) {
+    if (reconnectingRef.current) return
+    reconnectingRef.current = true
+
+    const refreshToken = getRefreshToken()
+    if (!refreshToken) {
+      reconnectingRef.current = false
+      setState({ phase: 'error', message: 'No refresh token — please log in again.' })
+      return
+    }
+
+    abortRef.current?.abort()
+    currentWebrtc.pc.close()
+
+    const ac = new AbortController()
+    abortRef.current = ac
+
+    setState(prev => {
+      if (prev.phase !== 'streaming') return prev
+      return { ...prev, connectionStatus: 'Reconectando' }
+    })
+
+    try {
+      const result = await reconnect({
+        authSession: session,
+        refreshToken,
+        consoleId,
+        oldStreamSession: streamSession,
+        signal: ac.signal,
+      })
+      if (ac.signal.aborted) return
+
+      startKeepalive(session, result.streamSession.sessionId, ac.signal).catch(err => {
+        if ((err as DOMException).name === 'AbortError') return
+        setState({ phase: 'error', message: (err as Error).message })
+      })
+
+      setState({
+        phase: 'streaming',
+        session,
+        consoleId,
+        streamSession: result.streamSession,
+        webrtc: result.webrtc,
+        connectionStatus: 'Activo',
+      })
+    } catch (err) {
+      if (ac.signal.aborted) return
+      if ((err as DOMException).name === 'AbortError') return
+      setState({ phase: 'error', message: (err as Error).message })
+    } finally {
+      reconnectingRef.current = false
     }
   }
 
@@ -146,10 +216,10 @@ export default function App() {
 
   if (state.phase === 'connecting' || state.phase === 'negotiating-sdp' || state.phase === 'negotiating-ice' || state.phase === 'waiting-connection') {
     const statusText = 
-      state.phase === 'negotiating-sdp' ? 'Exchanging SDP offer/answer…' :
-      state.phase === 'negotiating-ice' ? 'Exchanging ICE candidates…' :
-      state.phase === 'waiting-connection' ? 'Establishing connection…' :
-      `${state.sessionState}…`
+      state.phase === 'negotiating-sdp' ? 'Conectando (intercambiando SDP)…' :
+      state.phase === 'negotiating-ice' ? 'Conectando (intercambiando ICE)…' :
+      state.phase === 'waiting-connection' ? 'Conectando (esperando conexión)…' :
+      `Conectando (${state.sessionState})…`
     
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -159,5 +229,14 @@ export default function App() {
   }
 
   // phase === 'streaming'
-  return <StreamView webrtc={state.webrtc} />
+  return (
+    <StreamView
+      webrtc={state.webrtc}
+      connectionStatus={state.connectionStatus}
+      onStreamFrozen={() => {
+        if (state.connectionStatus !== 'Activo') return
+        void handleStreamFrozen(state.session, state.streamSession, state.consoleId, state.webrtc)
+      }}
+    />
+  )
 }

@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WebRTCResult } from '../../app/webrtc/negotiation'
+import { FrameWatchdog } from '../../app/webrtc/watchdog'
 
 interface StreamViewProps {
   webrtc: WebRTCResult
+  connectionStatus: 'Conectando' | 'Activo' | 'Reconectando'
+  onStreamFrozen: () => void
 }
 
 type VideoTrackProcessor = {
@@ -18,7 +21,7 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
   return api.MediaStreamTrackProcessor ?? null
 }
 
-export function StreamView({ webrtc }: StreamViewProps) {
+export function StreamView({ webrtc, connectionStatus, onStreamFrozen }: StreamViewProps) {
   const [useVideoFallback, setUseVideoFallback] = useState(false)
   const [metricsOverlay, setMetricsOverlay] = useState('')
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true)
@@ -74,6 +77,11 @@ export function StreamView({ webrtc }: StreamViewProps) {
     let latestFrame: VideoFrame | null = null
     let rafId = 0
     let metricsTimer = 0
+    const watchdog = new FrameWatchdog({
+      thresholdMs: 3000,
+      checkIntervalMs: 1000,
+      onFrozen: () => onStreamFrozen(),
+    })
     let lastCanvasWidth = 0
     let lastCanvasHeight = 0
 
@@ -197,6 +205,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         const processor = new processorCtor({ track: webrtc.videoTrack })
         reader = processor.readable.getReader()
         setUseVideoFallback(false)
+        watchdog.start()
 
         metricsTimer = window.setInterval(() => {
           if (!metrics.rendered && !metrics.dropped) return
@@ -244,6 +253,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
               metrics.dropped += 1
             }
             latestFrame = frame
+            watchdog.recordFrame()
           }
         }
 
@@ -336,6 +346,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
       if (device && onUncapturedError) device.removeEventListener('uncapturederror', onUncapturedError)
       if (onResize) window.removeEventListener('resize', onResize)
       if (metricsTimer) window.clearInterval(metricsTimer)
+      watchdog.stop()
       if (rafId) cancelAnimationFrame(rafId)
       if (latestFrame) {
         latestFrame.close()
@@ -346,7 +357,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
       resourcesBySize.clear()
       currentResource = null
     }
-  }, [webrtc.videoTrack])
+  }, [webrtc.videoTrack, onStreamFrozen])
 
   useEffect(() => {
     const el = videoRef.current
@@ -402,6 +413,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         muted
       />
       <audio ref={audioRef} hidden />
+      <div className="absolute right-3 top-3 rounded bg-black/70 px-3 py-1 text-xs text-white shadow">
+        {connectionStatus}
+      </div>
       {!useVideoFallback && showMetricsOverlay && metricsOverlay && (
         <div className="absolute left-3 top-3 max-w-[calc(100vw-2rem)] rounded bg-black/70 px-3 py-2 font-mono text-xs text-emerald-300 shadow">
           {metricsOverlay}
