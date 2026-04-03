@@ -28,7 +28,7 @@ src/        React UI — components, screens, hooks
 ├── screens/
 │   ├── Login.tsx         Device Code login flow
 │   ├── ConsoleList.tsx   Console selection (SmartGlass, gamepad navigation)
-│   └── StreamView.tsx    Video element rendering audio+video tracks
+│   └── StreamView.tsx    Streaming view (WebGPU + fallback video)
 app/        Protocol logic — no React, no UI
 ├── auth/
 │   ├── devicecode.ts     Device Code flow + token refresh
@@ -37,7 +37,8 @@ app/        Protocol logic — no React, no UI
 ├── consoles/
 │   └── smartglass.ts     Console discovery via xccs.xboxlive.com
 ├── streaming/
-│   └── session.ts        Session lifecycle (startSession, pollUntilProvisioned, startKeepalive, deleteSession)
+│   ├── session.ts        Session lifecycle (startSession, pollUntilProvisioned, startKeepalive, deleteSession)
+│   └── reconnect.ts      Transparent stream reconnection with retry/backoff
 ├── webrtc/
 │   └── negotiation.ts    RTCPeerConnection setup, SDP offer/answer, ICE exchange, data channels, gamepad input
 ├── channels/     Data channels (message, control, input, chat)
