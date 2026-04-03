@@ -40,6 +40,7 @@ export default function App() {
   const [state, setState] = useState<AppState>({ phase: 'loading' })
   const abortRef = useRef<AbortController | null>(null)
   const reconnectingRef = useRef(false)
+  const [isForegroundActive, setIsForegroundActive] = useState(() => document.visibilityState === 'visible' && document.hasFocus())
 
   function reconnectDelayMs(attempt: number): number {
     return attempt <= 1 ? 500 : attempt === 2 ? 1500 : 3000
@@ -230,6 +231,20 @@ export default function App() {
   }
 
   useEffect(() => {
+    const syncForeground = () => {
+      setIsForegroundActive(document.visibilityState === 'visible' && document.hasFocus())
+    }
+    document.addEventListener('visibilitychange', syncForeground)
+    window.addEventListener('focus', syncForeground)
+    window.addEventListener('blur', syncForeground)
+    return () => {
+      document.removeEventListener('visibilitychange', syncForeground)
+      window.removeEventListener('focus', syncForeground)
+      window.removeEventListener('blur', syncForeground)
+    }
+  }, [])
+
+  useEffect(() => {
     if (state.phase !== 'streaming') return
     const { session, streamSession, consoleId, webrtc, connectionStatus } = state
 
@@ -244,15 +259,26 @@ export default function App() {
       void handleStreamFrozen(session, streamSession, consoleId, webrtc, cause)
     }
 
+    const maybeReconnectOnResume = () => {
+      if (!shouldReconnectAfterResume) return
+      shouldReconnectAfterResume = false
+      if (!navigator.onLine) return
+      const connectionState = webrtc.pc.connectionState
+      if (
+        connectionState === 'failed' ||
+        connectionState === 'disconnected' ||
+        connectionState === 'closed'
+      ) {
+        triggerReconnect('context-resume')
+      }
+    }
+
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         shouldReconnectAfterResume = true
         return
       }
-      if (shouldReconnectAfterResume) {
-        shouldReconnectAfterResume = false
-        triggerReconnect('context-resume')
-      }
+      maybeReconnectOnResume()
     }
 
     const onBlur = () => {
@@ -261,10 +287,7 @@ export default function App() {
 
     const onFocus = () => {
       if (document.visibilityState !== 'visible') return
-      if (shouldReconnectAfterResume) {
-        shouldReconnectAfterResume = false
-        triggerReconnect('context-resume')
-      }
+      maybeReconnectOnResume()
     }
 
     const onOffline = () => {
@@ -274,7 +297,11 @@ export default function App() {
     const onOnline = () => {
       if (!offlineDetected) return
       offlineDetected = false
-      triggerReconnect('online-resume')
+      if (document.visibilityState === 'visible' && document.hasFocus()) {
+        triggerReconnect('online-resume')
+      } else {
+        shouldReconnectAfterResume = true
+      }
     }
 
     const onConnectionStateChange = () => {
@@ -375,6 +402,7 @@ export default function App() {
           ? `${state.reconnectCause ?? 'unknown'}${state.reconnectAttempt ? ` (intento ${state.reconnectAttempt}/3)` : ''}`
           : undefined
       }
+      isForegroundActive={isForegroundActive}
     />
   )
 }

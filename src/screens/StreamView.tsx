@@ -5,6 +5,7 @@ interface StreamViewProps {
   webrtc: WebRTCResult
   connectionStatus: 'Conectando' | 'Activo' | 'Reconectando'
   connectionDetail?: string
+  isForegroundActive?: boolean
 }
 
 type VideoTrackProcessor = {
@@ -20,7 +21,7 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
   return api.MediaStreamTrackProcessor ?? null
 }
 
-export function StreamView({ webrtc, connectionStatus, connectionDetail }: StreamViewProps) {
+export function StreamView({ webrtc, connectionStatus, connectionDetail, isForegroundActive = true }: StreamViewProps) {
   const [useVideoFallback, setUseVideoFallback] = useState(false)
   const [metricsOverlay, setMetricsOverlay] = useState('')
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true)
@@ -411,6 +412,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         muted
       />
       <audio ref={audioRef} hidden />
+      {!isForegroundActive ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/65">
+          <p className="rounded bg-black/70 px-4 py-2 text-sm text-white/90">
+            Stream en pausa por estar en segundo plano
+          </p>
+        </div>
+      ) : null}
       <div className="absolute right-3 top-3 rounded bg-black/70 px-3 py-1 text-xs text-white shadow">
         {connectionStatus}
       </div>
