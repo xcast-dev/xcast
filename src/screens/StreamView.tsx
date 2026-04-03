@@ -13,6 +13,7 @@ type VideoTrackProcessor = {
 }
 
 type MediaStreamTrackProcessorCtor = new (init: { track: MediaStreamTrack }) => VideoTrackProcessor
+const BASE_GAIN_AT_100 = 2
 
 function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
   const api = globalThis as typeof globalThis & {
@@ -25,9 +26,13 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
   const [useVideoFallback, setUseVideoFallback] = useState(false)
   const [metricsOverlay, setMetricsOverlay] = useState('')
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true)
+  const [volume, setVolume] = useState(100)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const gainNodeRef = useRef<GainNode | null>(null)
+  const streamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -42,19 +47,53 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
   useEffect(() => {
     const el = audioRef.current
     if (!el) return
-    let active = true
+    const audioApi = window as Window & { webkitAudioContext?: typeof AudioContext }
+    const AudioContextCtor = window.AudioContext ?? audioApi.webkitAudioContext
     const stream = new MediaStream([webrtc.audioTrack])
     el.srcObject = stream
+    el.muted = true
+    el.volume = 0
     void el.play().catch(err => {
-      if (!active) return
       if (err instanceof DOMException && err.name === 'AbortError') return
       console.warn('Audio autoplay failed:', err)
     })
+    if (AudioContextCtor) {
+      const ctx = new AudioContextCtor()
+      const source = ctx.createMediaStreamSource(stream)
+      const gainNode = ctx.createGain()
+      source.connect(gainNode)
+      gainNode.connect(ctx.destination)
+      audioContextRef.current = ctx
+      streamSourceRef.current = source
+      gainNodeRef.current = gainNode
+      void ctx.resume().catch(() => undefined)
+    }
     return () => {
-      active = false
       el.srcObject = null
+      gainNodeRef.current?.disconnect()
+      streamSourceRef.current?.disconnect()
+      streamSourceRef.current = null
+      gainNodeRef.current = null
+      const ctx = audioContextRef.current
+      audioContextRef.current = null
+      void ctx?.close().catch(() => undefined)
     }
   }, [webrtc.audioTrack])
+
+  useEffect(() => {
+    const level = Math.max(0, Math.min((volume / 100) * BASE_GAIN_AT_100, 2 * BASE_GAIN_AT_100))
+    const el = audioRef.current
+    if (!el) return
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = level
+      el.muted = true
+      el.volume = 0
+      void audioContextRef.current?.resume().catch(() => undefined)
+      return
+    }
+    el.volume = Math.max(0, Math.min(level, 1))
+    el.muted = false
+  }, [volume])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -411,7 +450,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         playsInline
         muted
       />
-      <audio ref={audioRef} hidden />
+      <audio ref={audioRef} hidden autoPlay playsInline />
       {!isForegroundActive ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/65">
           <p className="rounded bg-black/70 px-4 py-2 text-sm text-white/90">
@@ -427,6 +466,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
           {connectionDetail}
         </div>
       ) : null}
+      <div className="absolute bottom-3 right-3 z-20 w-56 rounded bg-black/70 px-3 py-2 text-xs text-white shadow">
+        <div className="mb-1 flex items-center justify-between">
+          <span>Volumen</span>
+          <span>{volume}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={200}
+          step={1}
+          value={volume}
+          onChange={event => setVolume(Number(event.target.value))}
+          className="w-full"
+        />
+      </div>
       {!useVideoFallback && showMetricsOverlay && metricsOverlay && (
         <div className="absolute left-3 top-3 max-w-[calc(100vw-2rem)] rounded bg-black/70 px-3 py-2 font-mono text-xs text-emerald-300 shadow">
           {metricsOverlay}
