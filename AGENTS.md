@@ -26,9 +26,20 @@ npm run dev
 ```
 src/        React UI — components, screens, hooks
 ├── screens/
-│   ├── Login.tsx         Device Code login flow
-│   ├── ConsoleList.tsx   Console selection (SmartGlass, gamepad navigation)
+│   ├── Login.tsx         Device Code login flow (con timer y progress)
+│   ├── ConsoleList.tsx   Console selection (SmartGlass, gamepad navigation, badges)
 │   └── StreamView.tsx    Streaming view (WebGPU + fallback video)
+├── components/
+│   ├── GamepadVisualizer.tsx   Debug overlay para gamepad
+│   └── ui/               shadcn/ui components
+│       ├── button.tsx
+│       ├── card.tsx
+│       ├── input.tsx
+│       ├── badge.tsx
+│       ├── separator.tsx
+│       ├── alert.tsx
+│       ├── skeleton.tsx
+│       └── progress.tsx
 app/        Protocol logic — no React, no UI
 ├── auth/
 │   ├── devicecode.ts     Device Code flow + token refresh
@@ -41,9 +52,7 @@ app/        Protocol logic — no React, no UI
 │   └── reconnect.ts      Transparent stream reconnection with retry/backoff
 ├── webrtc/
 │   └── negotiation.ts    RTCPeerConnection setup, SDP offer/answer, ICE exchange, data channels, gamepad input
-├── channels/     Data channels (message, control, input, chat)
-├── input/        Binary input serialization (gamepad, mouse, keyboard)
-└── render/       WebGPU renderer, audio
+└── input/                Binary input serialization (inline in negotiation.ts)
 server/
 ├── index.ts      Fastify setup + plugin registration
 └── routes/
