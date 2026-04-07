@@ -15,9 +15,10 @@ import { saveSession, getValidSession, getRefreshToken } from '../app/auth/persi
 import { startSession, pollUntilProvisioned, startKeepalive } from '../app/streaming/session'
 import type { SessionState, StreamSession } from '../app/streaming/session'
 import { negotiate } from '../app/webrtc/negotiation'
-import type { WebRTCResult } from '../app/webrtc/negotiation'
+import type { NegotiationOptions, WebRTCResult } from '../app/webrtc/negotiation'
 import { reconnect } from '../app/streaming/reconnect'
 import { StreamView } from '@/screens/StreamView'
+import { loadSettings } from '../app/settings/preferences'
 
 type ConnectionStatus = 'Conectando' | 'Activo' | 'Reconectando'
 type ReconnectCause = 'pc-failed' | 'keepalive' | 'context-resume' | 'online-resume'
@@ -100,6 +101,11 @@ export default function App() {
     setState({ phase: 'connecting', session, consoleId, sessionState: 'Provisioning' })
 
     try {
+      const settings = loadSettings()
+      const negotiationOptions: NegotiationOptions = {
+        quality: settings.quality,
+        h264Profile: settings.h264Profile,
+      }
       const streamSession = await startSession(session, consoleId)
       await pollUntilProvisioned(
         session,
@@ -116,6 +122,7 @@ export default function App() {
         session,
         streamSession,
         ac.signal,
+        negotiationOptions,
         // Progress callbacks
         (phase) => {
           if (phase === 'ice-exchange') {
@@ -186,10 +193,15 @@ export default function App() {
         })
         try {
           console.warn(`[RECONNECT] attempt ${attempt}/3 cause=${cause}`)
+          const settings = loadSettings()
           const result = await reconnect({
             authSession: session,
             refreshToken,
             consoleId,
+            options: {
+              quality: settings.quality,
+              h264Profile: settings.h264Profile,
+            },
             oldStreamSession,
             signal: ac.signal,
           })
@@ -257,8 +269,9 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    const fallbackFavicon = '/favicon.svg'
     const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
-    const currentHref = favicon?.href
+    const currentHref = favicon?.href ?? fallbackFavicon
 
     const title =
       state.phase === 'streaming'
@@ -289,11 +302,15 @@ export default function App() {
 
     document.title = title
     if (favicon) {
-      favicon.href = dynamicFavicon
+      try {
+        favicon.href = dynamicFavicon
+      } catch {
+        favicon.href = fallbackFavicon
+      }
     }
 
     return () => {
-      if (favicon && currentHref) {
+      if (favicon) {
         favicon.href = currentHref
       }
     }

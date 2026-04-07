@@ -1,5 +1,6 @@
 import type { AuthSession } from '../auth/xsts'
 import type { StreamSession } from '../streaming/session'
+import { getPreferredResolution, type H264Profile, type StreamQuality } from '../settings/preferences'
 
 const SERVER = 'http://localhost:1209'
 const CONTROL_ACCESS_KEY = '4BDB3609-C1F1-4195-9B37-FEFF45DA8B8E'
@@ -41,7 +42,8 @@ function sendMessageHandshake(message: RTCDataChannel): void {
   message.send(JSON.stringify({ type: 'Handshake', version: 'messageV1', id: crypto.randomUUID(), cv: '0' }))
 }
 
-function sendConfigurationMessages(message: RTCDataChannel): void {
+function sendConfigurationMessages(message: RTCDataChannel, quality: StreamQuality): void {
+  const resolution = getPreferredResolution(quality)
   const send = (target: string, content: Record<string, unknown>) =>
     message.send(JSON.stringify({ type: 'Message', target, content }))
 
@@ -51,9 +53,9 @@ function sendConfigurationMessages(message: RTCDataChannel): void {
   send('/streaming/characteristics/touchinputenabledchanged', { touchInputEnabled: false })
   send('/streaming/characteristics/clientdevicecapabilities', {})
   send('/streaming/characteristics/dimensionschanged', {
-    horizontal: 1920, vertical: 1080,
-    preferredWidth: 1920, preferredHeight: 1080,
-    safeAreaLeft: 0, safeAreaTop: 0, safeAreaRight: 1920, safeAreaBottom: 1080,
+    horizontal: resolution.width, vertical: resolution.height,
+    preferredWidth: resolution.width, preferredHeight: resolution.height,
+    safeAreaLeft: 0, safeAreaTop: 0, safeAreaRight: resolution.width, safeAreaBottom: resolution.height,
     supportsCustomResolution: true,
   })
 }
@@ -232,7 +234,7 @@ function whenOpen(channel: RTCDataChannel, fn: () => void): void {
   channel.addEventListener('open', fn, { once: true })
 }
 
-function initDataChannels(channels: DataChannels, signal: AbortSignal): void {
+function initDataChannels(channels: DataChannels, signal: AbortSignal, quality: StreamQuality): void {
   let handshaked = false
   const seqRef = { value: 0 }
 
@@ -250,7 +252,7 @@ function initDataChannels(channels: DataChannels, signal: AbortSignal): void {
           channels.input.send(buildClientMetadata(seqRef.value++))
           startGamepadLoop(channels.input, channels.control, seqRef, signal)
         })
-        sendConfigurationMessages(channels.message)
+        sendConfigurationMessages(channels.message, quality)
         return
       }
 
@@ -264,15 +266,28 @@ function initDataChannels(channels: DataChannels, signal: AbortSignal): void {
   }
 }
 
-// Reorder video codecs: H.264 High → Main → Baseline, then the rest.
-function preferH264(pc: RTCPeerConnection): void {
+// Reorder video codecs according to user profile preference.
+function preferH264(pc: RTCPeerConnection, preferredProfile: H264Profile): void {
   const caps = RTCRtpReceiver.getCapabilities('video')
   if (!caps) return
 
-  const h264Order = ['4d', '42e', '420']
+  const preferredOrder: Record<H264Profile, string[]> = {
+    high: ['64', '4d', '42'],
+    main: ['4d', '64', '42'],
+    baseline: ['42', '4d', '64'],
+  }
+  const rankByProfile = preferredOrder[preferredProfile]
+
+  const profileIdPrefix = (fmtp?: string): string | null => {
+    if (!fmtp) return null
+    const match = fmtp.match(/profile-level-id=([0-9a-fA-F]{6})/)
+    if (!match) return null
+    return match[1].slice(0, 2).toLowerCase()
+  }
+
   const sorted = [...caps.codecs].sort((a, b) => {
-    const pa = h264Order.findIndex(p => a.sdpFmtpLine?.includes(`profile-level-id=${p}`))
-    const pb = h264Order.findIndex(p => b.sdpFmtpLine?.includes(`profile-level-id=${p}`))
+    const pa = rankByProfile.findIndex(p => profileIdPrefix(a.sdpFmtpLine) === p)
+    const pb = rankByProfile.findIndex(p => profileIdPrefix(b.sdpFmtpLine) === p)
     return (pa === -1 ? 999 : pa) - (pb === -1 ? 999 : pb)
   })
 
@@ -326,19 +341,25 @@ export interface WebRTCResult {
   channels:   DataChannels
 }
 
+export interface NegotiationOptions {
+  quality: StreamQuality
+  h264Profile: H264Profile
+}
+
 export async function negotiate(
   authSession:   AuthSession,
   streamSession: StreamSession,
   signal:        AbortSignal,
+  options:       NegotiationOptions,
   onProgress?:   (phase: 'ice-exchange' | 'waiting-tracks') => void
 ): Promise<WebRTCResult> {
   const pc = new RTCPeerConnection({})
   // Data channels must be created before the offer so they appear in the SDP.
   const channels = createDataChannels(pc)
-  initDataChannels(channels, signal)
+  initDataChannels(channels, signal, options.quality)
   pc.addTransceiver('audio', { direction: 'sendrecv' })
   pc.addTransceiver('video', { direction: 'recvonly' })
-  preferH264(pc)
+  preferH264(pc, options.h264Profile)
 
   // Register track handler early to avoid missing ontrack events.
   const tracksPromise = new Promise<[MediaStreamTrack, MediaStreamTrack]>((resolve, reject) => {
