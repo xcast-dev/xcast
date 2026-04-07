@@ -18,7 +18,7 @@ export interface ReconnectResult {
   webrtc: WebRTCResult
 }
 
-export async function reconnect(context: ReconnectContext): Promise<ReconnectResult> {
+async function reconnect(context: ReconnectContext): Promise<ReconnectResult> {
   const { authSession, refreshToken, consoleId, oldStreamSession, signal, options } = context
 
   if (oldStreamSession) {
@@ -35,8 +35,11 @@ export async function reconnect(context: ReconnectContext): Promise<ReconnectRes
     await deleteSession(authSession, oldStreamSession.sessionId).catch(() => undefined)
   }
 
-  const streamSession = await startSession(authSession, consoleId)
+  const streamSession = await startSession(authSession, consoleId, { quality: options.quality })
   await pollUntilProvisioned(authSession, streamSession.sessionId, refreshToken, signal)
   const webrtc = await negotiate(authSession, streamSession, signal, options)
   return { streamSession, webrtc }
 }
+
+export { reconnect }
+export default reconnect

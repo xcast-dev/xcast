@@ -1,4 +1,5 @@
 import type { AuthSession } from '../auth/xsts'
+import type { StreamQuality } from '../settings/preferences'
 
 const SERVER = 'http://localhost:1209'
 
@@ -9,9 +10,36 @@ export interface StreamSession {
   sessionPath: string
 }
 
+export interface StartSessionOptions {
+  quality: StreamQuality
+}
+
 interface StateResponse {
   state:         SessionState
-  errorDetails?: string
+  errorDetails?: unknown
+}
+
+const PROVISIONING_TIMEOUT_MS = 180_000
+const TRANSIENT_WNS_MAX_RETRIES = 8
+
+function describeErrorDetails(errorDetails: unknown): string {
+  if (typeof errorDetails === 'string') return errorDetails
+  if (errorDetails == null) return 'unknown'
+  try {
+    return JSON.stringify(errorDetails)
+  } catch {
+    return String(errorDetails)
+  }
+}
+
+function isTransientWnsRegistrationError(errorDetails: unknown): boolean {
+  if (!errorDetails || typeof errorDetails !== 'object') return false
+  const value = errorDetails as { code?: unknown; message?: unknown }
+  return (
+    value.code === 'WNSError' &&
+    typeof value.message === 'string' &&
+    value.message.includes('WaitingForServerToRegister')
+  )
 }
 
 async function getPurposeToken(refreshToken: string): Promise<string> {
@@ -27,12 +55,13 @@ async function getPurposeToken(refreshToken: string): Promise<string> {
 
 export async function startSession(
   session: AuthSession,
-  serverId: string
+  serverId: string,
+  options: StartSessionOptions
 ): Promise<StreamSession> {
   const res = await fetch(`${SERVER}/streaming/play`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ baseUri: session.baseUri, gsToken: session.gsToken, serverId }),
+    body:    JSON.stringify({ baseUri: session.baseUri, gsToken: session.gsToken, serverId, quality: options.quality }),
   })
   if (!res.ok) throw new Error(`startSession failed: ${res.status}`)
   return res.json() as Promise<StreamSession>
@@ -47,6 +76,9 @@ export async function pollUntilProvisioned(
   onStateChange?: (state: SessionState) => void
 ): Promise<void> {
   let connected = false
+  const startedAt = Date.now()
+  let transientWnsFailures = 0
+  let lastFailureDetail = ''
 
   while (!signal.aborted) {
     const res = await fetch(`${SERVER}/streaming/${sessionId}/state`, {
@@ -62,8 +94,20 @@ export async function pollUntilProvisioned(
     console.log('[SESSION] Current state:', state)
 
     if (state === 'Failed') {
-      throw new Error(`Session failed: ${errorDetails ?? 'unknown'}`)
+      const failureText = describeErrorDetails(errorDetails)
+      lastFailureDetail = failureText
+      if (isTransientWnsRegistrationError(errorDetails) && transientWnsFailures < TRANSIENT_WNS_MAX_RETRIES) {
+        transientWnsFailures += 1
+        console.warn(
+          `[SESSION] transient WNS registration error (${transientWnsFailures}/${TRANSIENT_WNS_MAX_RETRIES}) — waiting and retrying`
+        )
+        await sleep(2000, signal)
+        continue
+      }
+      throw new Error(`Session failed: ${failureText}`)
     }
+
+    transientWnsFailures = 0
 
     if (state === 'ReadyToConnect' && !connected) {
       connected = true
@@ -99,6 +143,13 @@ export async function pollUntilProvisioned(
         await sleep(2000, signal)
       }
       return
+    }
+
+    if (Date.now() - startedAt > PROVISIONING_TIMEOUT_MS) {
+      const suffix = lastFailureDetail ? ` | last failure: ${lastFailureDetail}` : ''
+      throw new Error(
+        `Session provisioning timeout after ${Math.round(PROVISIONING_TIMEOUT_MS / 1000)}s (last state: ${state})${suffix}`
+      )
     }
 
     await sleep(1000, signal)
