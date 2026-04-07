@@ -234,9 +234,139 @@ function whenOpen(channel: RTCDataChannel, fn: () => void): void {
   channel.addEventListener('open', fn, { once: true })
 }
 
+interface VibrationCommand {
+  gamepadIndex: number
+  leftMotor: number
+  rightMotor: number
+  durationMs: number
+  delayMs: number
+  repeat: number
+}
+
+function parseVibrationWithReportType(view: DataView, offset: number): VibrationCommand | null {
+  if (view.byteLength < offset + 13) return null
+  if (view.getUint8(offset) !== 128) return null
+  return {
+    gamepadIndex: view.getUint8(offset + 3),
+    leftMotor: Math.max(0, Math.min(1, view.getUint8(offset + 4) / 100)),
+    rightMotor: Math.max(0, Math.min(1, view.getUint8(offset + 5) / 100)),
+    durationMs: view.getUint16(offset + 8, true),
+    delayMs: view.getUint16(offset + 10, true),
+    repeat: view.getUint8(offset + 12),
+  }
+}
+
+function parseVibrationFromBinary(data: ArrayBuffer): VibrationCommand | null {
+  const view = new DataView(data)
+
+  const direct = parseVibrationWithReportType(view, 0)
+  if (direct) return direct
+
+  // Universal input header (14 bytes): reportType at [0..1], payload starts at 14.
+  const reportType = view.getUint16(0, true)
+  if (reportType === 128) {
+    const wrapped = parseVibrationWithReportType(view, 14)
+    if (wrapped) return wrapped
+
+    // Variant observed in some clients: payload may omit inner reportType byte.
+    if (view.byteLength >= 24) {
+      return {
+        gamepadIndex: view.getUint8(14),
+        leftMotor: Math.max(0, Math.min(1, view.getUint8(15) / 100)),
+        rightMotor: Math.max(0, Math.min(1, view.getUint8(16) / 100)),
+        durationMs: view.getUint16(19, true),
+        delayMs: view.getUint16(21, true),
+        repeat: view.getUint8(23),
+      }
+    }
+  }
+  return null
+}
+
+async function applyVibrationCommand(command: VibrationCommand): Promise<void> {
+  const gamepads = navigator.getGamepads()
+  const hasActuator = (g: Gamepad | null): g is Gamepad => {
+    if (!g || !g.connected) return false
+    const extended = g as Gamepad & { hapticActuators?: GamepadHapticActuator[] }
+    return Boolean(g.vibrationActuator) || Boolean(extended.hapticActuators?.length)
+  }
+  const directGamepad = gamepads[command.gamepadIndex] ?? null
+  const targetGamepad = hasActuator(directGamepad) ? directGamepad : gamepads.find(hasActuator) ?? null
+  if (!targetGamepad) return
+
+  const extendedGamepad = targetGamepad as Gamepad & { hapticActuators?: GamepadHapticActuator[] }
+  const actuators = [
+    targetGamepad.vibrationActuator,
+    ...(extendedGamepad.hapticActuators ?? []),
+  ].filter(Boolean)
+  if (!actuators.length) return
+
+  const repeatCount = Math.max(1, Math.min(command.repeat + 1, 6))
+  const duration = Math.max(10, Math.min(command.durationMs, 4000))
+  const delay = Math.max(0, Math.min(command.delayMs, 1000))
+  const effect = {
+    startDelay: delay,
+    duration,
+    weakMagnitude: Math.max(0, Math.min(1, command.leftMotor)),
+    strongMagnitude: Math.max(0, Math.min(1, command.rightMotor)),
+  } as const
+  for (let pass = 0; pass < repeatCount; pass += 1) {
+    for (const actuator of actuators) {
+      if (!actuator) continue
+      await actuator.playEffect('dual-rumble', effect).catch(() => undefined)
+    }
+  }
+}
+
+function bindVibrationHandler(
+  channel: RTCDataChannel,
+  vibrationTimers: Set<number>,
+  channelName: 'control' | 'input'
+): void {
+  channel.onmessage = event => {
+    const data = event.data
+    if (typeof data === 'string') return
+    const handle = (buffer: ArrayBuffer) => {
+      const vibration = parseVibrationFromBinary(buffer)
+      if (!vibration) return
+      if (import.meta.env.DEV) {
+        console.debug(
+          `[xcast][vibration] ${channelName} idx=${vibration.gamepadIndex} weak=${vibration.leftMotor} strong=${vibration.rightMotor} duration=${vibration.durationMs} repeat=${vibration.repeat} bytes=${buffer.byteLength}`
+        )
+      }
+      const plays = Math.max(1, vibration.repeat + 1)
+      const spacing = Math.max(vibration.durationMs + vibration.delayMs, 16)
+      for (let i = 0; i < plays; i += 1) {
+        const timer = window.setTimeout(() => {
+          vibrationTimers.delete(timer)
+          void applyVibrationCommand(vibration)
+        }, i * spacing)
+        vibrationTimers.add(timer)
+      }
+    }
+
+    if (data instanceof ArrayBuffer) {
+      handle(data)
+      return
+    }
+    if (data instanceof Blob) {
+      void data.arrayBuffer().then(handle).catch(() => undefined)
+    }
+  }
+}
+
 function initDataChannels(channels: DataChannels, signal: AbortSignal, quality: StreamQuality): void {
   let handshaked = false
   const seqRef = { value: 0 }
+  const vibrationTimers = new Set<number>()
+
+  const clearVibrationTimers = () => {
+    for (const timer of vibrationTimers) window.clearTimeout(timer)
+    vibrationTimers.clear()
+  }
+  signal.addEventListener('abort', clearVibrationTimers, { once: true })
+  channels.control.addEventListener('close', clearVibrationTimers, { once: true })
+  channels.input.addEventListener('close', clearVibrationTimers, { once: true })
 
   channels.message.onopen = () => sendMessageHandshake(channels.message)
 
@@ -264,6 +394,9 @@ function initDataChannels(channels: DataChannels, signal: AbortSignal, quality: 
       }
     } catch { /* resilient to non-JSON frames */ }
   }
+
+  bindVibrationHandler(channels.control, vibrationTimers, 'control')
+  bindVibrationHandler(channels.input, vibrationTimers, 'input')
 }
 
 // Reorder video codecs according to user profile preference.
