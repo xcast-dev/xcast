@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { X, Maximize, Minimize, Keyboard, WifiOff, Signal, Volume2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { WebRTCResult } from '../../app/webrtc/negotiation'
 
 interface StreamViewProps {
@@ -6,6 +9,7 @@ interface StreamViewProps {
   connectionStatus: 'Conectando' | 'Activo' | 'Reconectando'
   connectionDetail?: string
   isForegroundActive?: boolean
+  onExit?: () => void
 }
 
 type VideoTrackProcessor = {
@@ -22,11 +26,16 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
   return api.MediaStreamTrackProcessor ?? null
 }
 
-export function StreamView({ webrtc, connectionStatus, connectionDetail, isForegroundActive = true }: StreamViewProps) {
+export function StreamView({ webrtc, connectionStatus, connectionDetail, isForegroundActive = true, onExit }: StreamViewProps) {
   const [useVideoFallback, setUseVideoFallback] = useState(false)
   const [metricsOverlay, setMetricsOverlay] = useState('')
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(true)
   const [volume, setVolume] = useState(100)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showControls, setShowControls] = useState(true)
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
+  const hideControlsTimer = useRef<number>(0)
+  const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -37,12 +46,22 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return
-      if (event.key.toLowerCase() !== 'h') return
-      setShowMetricsOverlay(prev => !prev)
+      const key = event.key.toLowerCase()
+      
+      if (key === 'h') {
+        setShowMetricsOverlay(prev => !prev)
+      } else if (key === '?') {
+        setShowKeyboardHelp(prev => !prev)
+      } else if (key === 'f') {
+        toggleFullscreen()
+      } else if (key === 'escape') {
+        if (isFullscreen) exitFullscreen()
+        else onExit?.()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [isFullscreen, onExit])
 
   useEffect(() => {
     const el = audioRef.current
@@ -94,6 +113,44 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
     el.volume = Math.max(0, Math.min(level, 1))
     el.muted = false
   }, [volume])
+
+  const toggleFullscreen = () => {
+    const elem = containerRef.current
+    if (!elem) return
+
+    if (!document.fullscreenElement) {
+      elem.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => undefined)
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => undefined)
+    }
+  }
+
+  const exitFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => undefined)
+    }
+  }
+
+  const scheduleHideControls = () => {
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current)
+    setShowControls(true)
+    hideControlsTimer.current = window.setTimeout(() => setShowControls(false), 3000)
+  }
+
+  useEffect(() => {
+    const onMouseMove = () => scheduleHideControls()
+    const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement)
+    
+    window.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    scheduleHideControls()
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
+      if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current)
+    }
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -438,54 +495,150 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
   }, [useVideoFallback, webrtc.videoTrack])
 
+  const connectionQuality = connectionStatus === 'Activo' ? 'good' : connectionStatus === 'Reconectando' ? 'poor' : 'connecting'
+
   return (
-    <div className="relative h-screen w-screen bg-black flex items-center justify-center">
-      <canvas
-        ref={canvasRef}
-        className={useVideoFallback ? 'hidden' : 'w-full max-w-[177.78vh] aspect-video bg-black'}
-      />
-      <video
-        ref={videoRef}
-        className={useVideoFallback ? 'w-full max-w-[177.78vh] aspect-video object-contain bg-black' : 'hidden'}
-        playsInline
-        muted
-      />
-      <audio ref={audioRef} hidden autoPlay playsInline />
-      {!isForegroundActive ? (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/65">
-          <p className="rounded bg-black/70 px-4 py-2 text-sm text-white/90">
-            Stream en pausa por estar en segundo plano
-          </p>
-        </div>
-      ) : null}
-      <div className="absolute right-3 top-3 rounded bg-black/70 px-3 py-1 text-xs text-white shadow">
-        {connectionStatus}
-      </div>
-      {connectionDetail ? (
-        <div className="absolute right-3 top-10 rounded bg-black/70 px-3 py-1 text-xs text-white/80 shadow">
-          {connectionDetail}
-        </div>
-      ) : null}
-      <div className="absolute bottom-3 right-3 z-20 w-56 rounded bg-black/70 px-3 py-2 text-xs text-white shadow">
-        <div className="mb-1 flex items-center justify-between">
-          <span>Volumen</span>
-          <span>{volume}%</span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={200}
-          step={1}
-          value={volume}
-          onChange={event => setVolume(Number(event.target.value))}
-          className="w-full"
+    <TooltipProvider>
+      <div 
+        ref={containerRef}
+        className="relative h-screen w-screen bg-black flex items-center justify-center"
+        onMouseMove={() => scheduleHideControls()}
+      >
+        <canvas
+          ref={canvasRef}
+          className={useVideoFallback ? 'hidden' : 'w-full max-w-[177.78vh] aspect-video bg-black'}
         />
-      </div>
-      {!useVideoFallback && showMetricsOverlay && metricsOverlay && (
-        <div className="absolute left-3 top-3 max-w-[calc(100vw-2rem)] rounded bg-black/70 px-3 py-2 font-mono text-xs text-emerald-300 shadow">
-          {metricsOverlay}
+        <video
+          ref={videoRef}
+          className={useVideoFallback ? 'w-full max-w-[177.78vh] aspect-video object-contain bg-black' : 'hidden'}
+          playsInline
+          muted
+        />
+        <audio ref={audioRef} hidden autoPlay playsInline />
+
+        {!isForegroundActive ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/65">
+            <p className="rounded bg-black/70 px-4 py-2 text-sm text-white/90">
+              Stream en pausa por estar en segundo plano
+            </p>
+          </div>
+        ) : null}
+
+        {/* Top bar - Status and connection */}
+        <div className={`absolute left-0 right-0 top-0 flex items-start justify-between p-3 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+          <div className="flex flex-col gap-2">
+            {!useVideoFallback && showMetricsOverlay && metricsOverlay && (
+              <div className="rounded bg-black/70 px-3 py-2 font-mono text-xs text-emerald-300 shadow">
+                {metricsOverlay}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2 rounded bg-black/70 px-3 py-2 text-xs text-white shadow">
+              {connectionQuality === 'good' && <Signal className="h-3 w-3 text-emerald-500" />}
+              {connectionQuality === 'poor' && <WifiOff className="h-3 w-3 text-amber-500" />}
+              {connectionQuality === 'connecting' && <Signal className="h-3 w-3 text-muted-foreground animate-pulse" />}
+              <span>{connectionStatus}</span>
+            </div>
+            {connectionDetail && (
+              <div className="rounded bg-black/70 px-3 py-1 text-xs text-white/80 shadow">
+                {connectionDetail}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </div>
+
+        {/* Bottom bar - Volume and controls */}
+        <div className={`absolute bottom-0 left-0 right-0 flex items-end justify-between p-3 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-colors text-white"
+                onClick={() => setShowKeyboardHelp(prev => !prev)}
+              >
+                <Keyboard className="h-4 w-4" />
+              </TooltipTrigger>
+              <TooltipContent>Atajos de teclado (?)</TooltipContent>
+            </Tooltip>
+
+            {onExit && (
+              <Tooltip>
+                <TooltipTrigger
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-colors text-white"
+                  onClick={onExit}
+                >
+                  <X className="h-4 w-4" />
+                </TooltipTrigger>
+                <TooltipContent>Salir (Esc)</TooltipContent>
+              </Tooltip>
+            )}
+
+            <Tooltip>
+              <TooltipTrigger
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-colors text-white"
+                onClick={toggleFullscreen}
+              >
+                {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+              </TooltipTrigger>
+              <TooltipContent>Pantalla completa (F)</TooltipContent>
+            </Tooltip>
+          </div>
+
+          <div className="flex items-center gap-3 rounded bg-black/70 px-4 py-2 text-xs text-white shadow">
+            <Volume2 className="h-4 w-4" />
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0}
+                max={200}
+                step={1}
+                value={volume}
+                onChange={event => setVolume(Number(event.target.value))}
+                className="w-24"
+              />
+              <span className="w-10 text-right font-mono">{volume}%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Keyboard shortcuts overlay */}
+        {showKeyboardHelp && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80">
+            <div className="rounded-lg bg-black/90 p-6 shadow-xl border border-white/10 max-w-md">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-white">Atajos de teclado</h3>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 w-6 p-0 text-white/60 hover:text-white"
+                  onClick={() => setShowKeyboardHelp(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="space-y-2 text-sm text-white/80">
+                <div className="flex justify-between">
+                  <span className="font-mono">H</span>
+                  <span>Mostrar/ocultar métricas</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-mono">F</span>
+                  <span>Pantalla completa</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-mono">?</span>
+                  <span>Mostrar esta ayuda</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-mono">Esc</span>
+                  <span>Salir del stream</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </TooltipProvider>
   )
 }

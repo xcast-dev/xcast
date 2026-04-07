@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { toast, Toaster } from 'sonner'
 import { Login } from '@/screens/Login'
 import { ConsoleList } from '@/screens/ConsoleList'
+import { Loader2, AlertCircle, Home } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import type { UserToken } from '../app/auth/devicecode'
 import { buildAuthSession } from '../app/auth/xsts'
 import type { AuthSession } from '../app/auth/xsts'
@@ -193,6 +198,10 @@ export default function App() {
             void handleStreamFrozen(session, result.streamSession, consoleId, result.webrtc, 'keepalive')
           })
 
+          toast.success('Reconexión exitosa', {
+            description: `Intento ${attempt}/3 completado`
+          })
+
           setState({
             phase: 'streaming',
             session,
@@ -292,11 +301,17 @@ export default function App() {
 
     const onOffline = () => {
       offlineDetected = true
+      toast.error('Conexión perdida', {
+        description: 'Se perdió la conexión a internet'
+      })
     }
 
     const onOnline = () => {
       if (!offlineDetected) return
       offlineDetected = false
+      toast.success('Conexión restaurada', {
+        description: 'Reconectando al stream…'
+      })
       if (document.visibilityState === 'visible' && document.hasFocus()) {
         triggerReconnect('online-resume')
       } else {
@@ -347,62 +362,107 @@ export default function App() {
     state.phase === 'streaming' ? state.connectionStatus : null,
   ])
 
-  if (state.phase === 'loading' || state.phase === 'building') {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">
-          {state.phase === 'loading' ? 'Loading…' : 'Authenticating…'}
-        </p>
-      </div>
-    )
-  }
-
-  if (state.phase === 'error') {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-destructive">Error: {state.message}</p>
-      </div>
-    )
-  }
-
-  if (state.phase === 'login') {
-    return <Login onAuthenticated={handleAuthenticated} />
-  }
-
-  if (state.phase === 'consoles') {
-    return (
-      <ConsoleList
-        session={state.session}
-        onSelect={consoleId => void handleConsoleSelected(state.session, consoleId)}
-      />
-    )
-  }
-
-  if (state.phase === 'connecting' || state.phase === 'negotiating-sdp' || state.phase === 'negotiating-ice' || state.phase === 'waiting-connection') {
-    const statusText = 
-      state.phase === 'negotiating-sdp' ? 'Conectando (intercambiando SDP)…' :
-      state.phase === 'negotiating-ice' ? 'Conectando (intercambiando ICE)…' :
-      state.phase === 'waiting-connection' ? 'Conectando (esperando conexión)…' :
-      `Conectando (${state.sessionState})…`
-    
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted-foreground">{statusText}</p>
-      </div>
-    )
-  }
-
-  // phase === 'streaming'
   return (
-    <StreamView
-      webrtc={state.webrtc}
-      connectionStatus={state.connectionStatus}
-      connectionDetail={
-        state.connectionStatus === 'Reconectando'
-          ? `${state.reconnectCause ?? 'unknown'}${state.reconnectAttempt ? ` (intento ${state.reconnectAttempt}/3)` : ''}`
-          : undefined
-      }
-      isForegroundActive={isForegroundActive}
-    />
+    <>
+      <Toaster position="top-right" richColors />
+      {state.phase === 'loading' || state.phase === 'building' ? (
+        <div className="flex min-h-screen items-center justify-center p-8">
+          <Card className="w-full max-w-md">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                {state.phase === 'loading' ? 'Cargando' : 'Autenticando'}
+              </CardTitle>
+              <CardDescription>
+                {state.phase === 'loading' 
+                  ? 'Verificando sesión guardada…' 
+                  : 'Construyendo sesión de autenticación…'}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      ) : state.phase === 'error' ? (
+        <div className="flex min-h-screen items-center justify-center p-8">
+          <Card className="w-full max-w-md border-destructive">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-3">
+                <AlertCircle className="h-5 w-5 text-destructive" />
+                Error de conexión
+              </CardTitle>
+              <CardDescription>No se pudo establecer la conexión</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{state.message}</AlertDescription>
+              </Alert>
+              <Button onClick={() => setState({ phase: 'login' })} className="w-full gap-2">
+                <Home className="h-4 w-4" />
+                Volver al inicio
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      ) : state.phase === 'login' ? (
+        <Login onAuthenticated={handleAuthenticated} />
+      ) : state.phase === 'consoles' ? (
+        <ConsoleList
+          session={state.session}
+          onSelect={consoleId => void handleConsoleSelected(state.session, consoleId)}
+          onLogout={() => {
+            abortRef.current?.abort()
+            localStorage.removeItem('xcast_session')
+            setState({ phase: 'login' })
+          }}
+        />
+      ) : state.phase === 'connecting' || state.phase === 'negotiating-sdp' || state.phase === 'negotiating-ice' || state.phase === 'waiting-connection' ? (
+        (() => {
+          const statusText = 
+            state.phase === 'negotiating-sdp' ? 'Intercambiando SDP…' :
+            state.phase === 'negotiating-ice' ? 'Intercambiando candidatos ICE…' :
+            state.phase === 'waiting-connection' ? 'Esperando conexión WebRTC…' :
+            `Preparando sesión (${state.sessionState})…`
+          
+          const description = 
+            state.phase === 'negotiating-sdp' ? 'Configurando parámetros de streaming' :
+            state.phase === 'negotiating-ice' ? 'Estableciendo conexión de red' :
+            state.phase === 'waiting-connection' ? 'Verificando audio y video' :
+            state.sessionState === 'Provisioning' ? 'Inicializando stream en la consola' :
+            state.sessionState === 'ReadyToConnect' ? 'Autorizando conexión' :
+            'Estableciendo conexión'
+        
+          return <div className="flex min-h-screen items-center justify-center p-8">
+            <Card className="w-full max-w-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  Conectando
+                </CardTitle>
+                <CardDescription>{description}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground text-center">{statusText}</p>
+              </CardContent>
+            </Card>
+          </div>
+        })()
+      ) : state.phase === 'streaming' ? (
+        <StreamView
+          webrtc={state.webrtc}
+          connectionStatus={state.connectionStatus}
+          connectionDetail={
+            state.connectionStatus === 'Reconectando'
+              ? `${state.reconnectCause ?? 'unknown'}${state.reconnectAttempt ? ` (intento ${state.reconnectAttempt}/3)` : ''}`
+              : undefined
+          }
+          isForegroundActive={isForegroundActive}
+          onExit={() => {
+            abortRef.current?.abort()
+            state.webrtc.pc.close()
+            setState({ phase: 'consoles', session: state.session })
+          }}
+        />
+      ) : null}
+    </>
   )
 }
