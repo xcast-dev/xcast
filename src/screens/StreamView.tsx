@@ -3,10 +3,12 @@ import { X, Maximize, Minimize, Keyboard, WifiOff, Signal, Volume2 } from 'lucid
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { WebRTCResult } from '../../app/webrtc/negotiation'
-import { loadSettings } from '../../app/settings/preferences'
+import { getPreferredResolution, loadSettings, type H264Profile, type StreamQuality } from '../../app/settings/preferences'
 
 interface StreamViewProps {
   webrtc: WebRTCResult
+  requestedQuality: StreamQuality
+  requestedH264Profile: H264Profile
   connectionStatus: 'Conectando' | 'Activo' | 'Reconectando'
   connectionDetail?: string
   isForegroundActive?: boolean
@@ -18,6 +20,20 @@ type VideoTrackProcessor = {
 }
 
 type MediaStreamTrackProcessorCtor = new (init: { track: MediaStreamTrack }) => VideoTrackProcessor
+type WebRtcStatsSample = RTCStats & {
+  kind?: string
+  isRemote?: boolean
+  state?: string
+  nominated?: boolean
+  currentRoundTripTime?: number
+  jitter?: number
+  framesPerSecond?: number
+  packetsLost?: number
+  bytesReceived?: number
+  codecId?: string
+  mimeType?: string
+  sdpFmtpLine?: string
+}
 const BASE_GAIN_AT_100 = 2
 
 function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
@@ -27,7 +43,15 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
   return api.MediaStreamTrackProcessor ?? null
 }
 
-export function StreamView({ webrtc, connectionStatus, connectionDetail, isForegroundActive = true, onExit }: StreamViewProps) {
+export function StreamView({
+  webrtc,
+  requestedQuality,
+  requestedH264Profile,
+  connectionStatus,
+  connectionDetail,
+  isForegroundActive = true,
+  onExit,
+}: StreamViewProps) {
   const settings = loadSettings()
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [useVideoFallback, setUseVideoFallback] = useState(false)
@@ -45,6 +69,16 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const streamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const connectionStatusRef = useRef(connectionStatus)
+  const volumeRef = useRef(volume)
+
+  useEffect(() => {
+    connectionStatusRef.current = connectionStatus
+  }, [connectionStatus])
+
+  useEffect(() => {
+    volumeRef.current = volume
+  }, [volume])
 
   useEffect(() => {
     if (localStorage.getItem('xcast_stream_onboarding_seen') === '1') return
@@ -122,14 +156,29 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
     el.muted = false
   }, [volume])
 
-  const toggleFullscreen = () => {
-    const elem = containerRef.current
+  const toggleFullscreen = async () => {
+    const elem = containerRef.current as (HTMLDivElement & {
+      webkitRequestFullscreen?: () => Promise<void>
+      msRequestFullscreen?: () => Promise<void>
+    }) | null
     if (!elem) return
+    const doc = document as Document & {
+      webkitExitFullscreen?: () => Promise<void>
+      msExitFullscreen?: () => Promise<void>
+    }
 
-    if (!document.fullscreenElement) {
-      elem.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => undefined)
-    } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => undefined)
+    try {
+      if (!document.fullscreenElement) {
+        if (elem.requestFullscreen) await elem.requestFullscreen()
+        else if (elem.webkitRequestFullscreen) await elem.webkitRequestFullscreen()
+        else if (elem.msRequestFullscreen) await elem.msRequestFullscreen()
+      } else {
+        if (document.exitFullscreen) await document.exitFullscreen()
+        else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen()
+        else if (doc.msExitFullscreen) await doc.msExitFullscreen()
+      }
+    } catch (err) {
+      console.warn('Fullscreen toggle failed:', err)
     }
   }
 
@@ -184,6 +233,16 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
     let metricsTimer = 0
     let lastCanvasWidth = 0
     let lastCanvasHeight = 0
+    let lastVideoWidth = 0
+    let lastVideoHeight = 0
+    let transportRttMs: number | null = null
+    let jitterMs: number | null = null
+    let bitrateMbps: number | null = null
+    let decodeFps: number | null = null
+    let packetsLost: number | null = null
+    let codecLabel = 'desconocido'
+    let lastBytesReceived = 0
+    let lastStatsAt = 0
 
     const resourcesBySize = new Map<string, { texture: GPUTexture; bindGroup: GPUBindGroup }>()
     let currentResource: { texture: GPUTexture; bindGroup: GPUBindGroup } | null = null
@@ -193,6 +252,86 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
       rendered: 0,
       dropped: 0,
       loops: 0,
+    }
+
+    const updateWebRtcStats = async () => {
+      try {
+        const report = await webrtc.pc.getStats()
+        let inboundVideo: WebRtcStatsSample | null = null
+        let activePair: WebRtcStatsSample | null = null
+
+        for (const raw of report.values()) {
+          const stat = raw as WebRtcStatsSample
+          if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
+            inboundVideo = stat
+          }
+          if (
+            stat.type === 'candidate-pair' &&
+            stat.state === 'succeeded' &&
+            stat.nominated === true
+          ) {
+            activePair = stat
+          }
+        }
+
+        if (!activePair) {
+          for (const raw of report.values()) {
+            const stat = raw as WebRtcStatsSample
+            if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && !activePair) {
+              activePair = stat
+            }
+          }
+        }
+
+        const rtt = activePair?.currentRoundTripTime as number | undefined
+        if (typeof rtt === 'number') {
+          transportRttMs = Number((rtt * 1000).toFixed(1))
+        }
+
+        if (inboundVideo) {
+          const jitter = inboundVideo.jitter as number | undefined
+          if (typeof jitter === 'number') {
+            jitterMs = Number((jitter * 1000).toFixed(1))
+          }
+
+          const fps = inboundVideo.framesPerSecond as number | undefined
+          if (typeof fps === 'number') {
+            decodeFps = Number(fps.toFixed(1))
+          }
+
+          const packetLoss = inboundVideo.packetsLost as number | undefined
+          if (typeof packetLoss === 'number') {
+            packetsLost = Number(packetLoss)
+          }
+
+          const bytes = inboundVideo.bytesReceived as number | undefined
+          if (typeof bytes === 'number') {
+            const now = performance.now()
+            const bytesReceived = Number(bytes)
+            if (lastStatsAt > 0 && bytesReceived >= lastBytesReceived) {
+              const elapsedSec = (now - lastStatsAt) / 1000
+              const deltaBytes = bytesReceived - lastBytesReceived
+              if (elapsedSec > 0) {
+                bitrateMbps = Number(((deltaBytes * 8) / (elapsedSec * 1_000_000)).toFixed(2))
+              }
+            }
+            lastBytesReceived = bytesReceived
+            lastStatsAt = now
+          }
+
+          const codecId = inboundVideo.codecId as string | undefined
+          if (typeof codecId === 'string') {
+            const codec = report.get(codecId) as WebRtcStatsSample | undefined
+            const mimeType = typeof codec?.mimeType === 'string' ? codec.mimeType : undefined
+            const fmtp = typeof codec?.sdpFmtpLine === 'string' ? codec.sdpFmtpLine : ''
+            const profileMatch = fmtp.match(/profile-level-id=([0-9a-fA-F]{6})/)
+            const profileHex = profileMatch ? profileMatch[1].slice(0, 2).toUpperCase() : null
+            codecLabel = profileHex && mimeType ? `${mimeType} (${profileHex})` : (mimeType ?? codecLabel)
+          }
+        }
+      } catch {
+        // Ignore transient stats read failures; overlay continues with last known values.
+      }
     }
 
     const start = async () => {
@@ -227,8 +366,15 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
           if (!context) return
           const ratio = Math.max(1, window.devicePixelRatio || 1)
           const rect = canvas.getBoundingClientRect()
-          const width = Math.max(1, Math.round(rect.width * ratio))
-          const height = Math.max(1, Math.round(rect.height * ratio))
+          let width = Math.max(1, Math.round(rect.width * ratio))
+          let height = Math.max(1, Math.round(rect.height * ratio))
+          if (requestedQuality === '720p') {
+            const maxWidth = 1280
+            const maxHeight = 720
+            const scale = Math.min(maxWidth / width, maxHeight / height, 1)
+            width = Math.max(16, Math.round((width * scale) / 16) * 16)
+            height = Math.max(9, Math.round((height * scale) / 9) * 9)
+          }
           if (width === lastCanvasWidth && height === lastCanvasHeight) return
           canvas.width = width
           canvas.height = height
@@ -311,7 +457,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         setUseVideoFallback(false)
 
         metricsTimer = window.setInterval(() => {
-          if (!metrics.rendered && !metrics.dropped) return
+          void updateWebRtcStats()
+          if (!metrics.rendered && !metrics.dropped && bitrateMbps == null) return
           const avgCopy = metrics.rendered ? metrics.copyMs / metrics.rendered : 0
           const avgRender = metrics.rendered ? metrics.renderMs / metrics.rendered : 0
           const rendered = metrics.rendered
@@ -320,25 +467,40 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
           const avgRenderMs = Number(avgRender.toFixed(3))
           const fps = Number((rendered / 2).toFixed(1))
           const dropPct = rendered + dropped > 0 ? Number(((dropped / (rendered + dropped)) * 100).toFixed(1)) : 0
-          const queueLag = latestFrame ? 1 : 0
-          const resolution = `${lastCanvasWidth}x${lastCanvasHeight}`
-          const vis = document.visibilityState === 'visible' ? 'active' : 'paused'
-          const renderer = useVideoFallback ? 'video-fallback' : 'webgpu'
+          const streamResolution = `${lastVideoWidth || lastCanvasWidth}x${lastVideoHeight || lastCanvasHeight}`
+          const canvasResolution = `${lastCanvasWidth}x${lastCanvasHeight}`
+          const targetResolution = getPreferredResolution(requestedQuality)
+          const targetResolutionLabel = `${targetResolution.width}x${targetResolution.height}`
+          const vis = document.visibilityState === 'visible' ? 'activo' : 'pausado'
+          const renderer = useVideoFallback ? 'video' : 'webgpu'
+          const decodeFpsText = decodeFps != null ? `${decodeFps}` : '-'
+          const bitrateText = bitrateMbps != null ? `${bitrateMbps} Mb/s` : '-'
+          const rttText = transportRttMs != null ? `${transportRttMs} ms` : '-'
+          const jitterText = jitterMs != null ? `${jitterMs} ms` : '-'
+          const packetsLostText = packetsLost != null ? `${packetsLost}` : '-'
           setMetricsOverlay(
-            `${renderer} | ${vis} | ${resolution} | ${fps}fps | drop ${dropPct}% (${dropped}) | copy ${avgCopyMs}ms | render ${avgRenderMs}ms | queue ${queueLag}`
+            `render: ${renderer} | solicitado: ${requestedQuality}/${requestedH264Profile} (${targetResolutionLabel}) | efectivo: stream ${streamResolution}, codec ${codecLabel} | estado: ${vis} | salida: ${canvasResolution} | fps render/dec: ${fps}/${decodeFpsText} | bitrate: ${bitrateText} | rtt/jitter: ${rttText}/${jitterText} | pérdida frame/pkt: ${dropPct}% (${dropped})/${packetsLostText} | copia/render: ${avgCopyMs}ms/${avgRenderMs}ms | vol: ${volumeRef.current}% | rtc: ${connectionStatusRef.current}`
           )
           if (import.meta.env.DEV) {
             console.debug('[webgpu]', {
               renderer,
               vis,
-              resolution,
+              streamResolution,
+              canvasResolution,
               fps,
               rendered,
               dropped,
               dropPct,
               avgCopyMs,
               avgRenderMs,
-              queueLag,
+              decodeFps,
+              bitrateMbps,
+              transportRttMs,
+              jitterMs,
+              packetsLost,
+              codecLabel,
+              requestedProfile: `${requestedQuality}/${requestedH264Profile}`,
+              targetResolution: targetResolutionLabel,
             })
           }
           metrics.copyMs = 0
@@ -351,6 +513,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
           while (active && reader) {
             const { value: frame, done } = await reader.read()
             if (done || !frame) break
+            lastVideoWidth = frame.displayWidth || frame.codedWidth
+            lastVideoHeight = frame.displayHeight || frame.codedHeight
             if (latestFrame) {
               latestFrame.close()
               metrics.dropped += 1
@@ -460,7 +624,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
       resourcesBySize.clear()
       currentResource = null
     }
-  }, [useVideoFallback, webrtc.videoTrack])
+  }, [requestedH264Profile, requestedQuality, useVideoFallback, webrtc.pc, webrtc.videoTrack])
 
   useEffect(() => {
     const el = videoRef.current
@@ -561,9 +725,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         <div className={`absolute bottom-0 left-0 right-0 flex items-end justify-between p-3 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
           <div className="flex items-center gap-2">
             <Tooltip>
-                <TooltipTrigger
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-all hover:scale-105 active:scale-95 text-white"
+              <TooltipTrigger
                 onClick={() => setShowKeyboardHelp(prev => !prev)}
+                render={
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 w-8 rounded-full bg-black/70 p-0 text-white hover:bg-black/90 transition-all hover:scale-105 active:scale-95"
+                  />
+                }
               >
                 <Keyboard className="h-4 w-4" />
               </TooltipTrigger>
@@ -573,8 +743,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             {onExit && (
               <Tooltip>
                 <TooltipTrigger
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-all hover:scale-105 active:scale-95 text-white"
                   onClick={onExit}
+                  render={
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-8 w-8 rounded-full bg-black/70 p-0 text-white hover:bg-black/90 transition-all hover:scale-105 active:scale-95"
+                    />
+                  }
                 >
                   <X className="h-4 w-4" />
                 </TooltipTrigger>
@@ -584,8 +760,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
             <Tooltip>
               <TooltipTrigger
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-all hover:scale-105 active:scale-95 text-white"
                 onClick={toggleFullscreen}
+                render={
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 w-8 rounded-full bg-black/70 p-0 text-white hover:bg-black/90 transition-all hover:scale-105 active:scale-95"
+                  />
+                }
               >
                 {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
               </TooltipTrigger>
