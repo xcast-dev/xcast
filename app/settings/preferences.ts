@@ -1,4 +1,4 @@
-export type StreamQuality = '1080p' | '720p' | 'auto'
+export type StreamQuality = 'full' | 'optimized'
 export type H264Profile = 'high' | 'main' | 'baseline'
 
 export interface StreamSettings {
@@ -9,7 +9,7 @@ export interface StreamSettings {
 }
 
 export const DEFAULT_STREAM_SETTINGS: StreamSettings = {
-  quality: 'auto',
+  quality: 'full',
   showMetrics: true,
   volume: 100,
   h264Profile: 'high',
@@ -21,8 +21,19 @@ export function loadSettings(): StreamSettings {
   try {
     const stored = localStorage.getItem(SETTINGS_STORAGE_KEY)
     if (!stored) return DEFAULT_STREAM_SETTINGS
-    const parsed = JSON.parse(stored) as Partial<StreamSettings>
-    return { ...DEFAULT_STREAM_SETTINGS, ...parsed }
+    const parsed = JSON.parse(stored) as Record<string, unknown>
+    const rawQuality = parsed.quality
+    const migratedQuality: StreamQuality =
+      rawQuality === 'optimized'
+        ? 'optimized'
+        : rawQuality === 'full'
+          ? 'full'
+          : DEFAULT_STREAM_SETTINGS.quality
+    return {
+      ...DEFAULT_STREAM_SETTINGS,
+      ...(parsed as Partial<StreamSettings>),
+      quality: migratedQuality,
+    }
   } catch {
     return DEFAULT_STREAM_SETTINGS
   }
@@ -33,12 +44,6 @@ export function saveSettings(settings: StreamSettings): void {
 }
 
 export function getPreferredResolution(quality: StreamQuality): { width: number; height: number } {
-  if (quality === '1080p') return { width: 1920, height: 1080 }
-  if (quality === '720p') return { width: 1280, height: 720 }
-
-  const ratio = Math.max(1, window.devicePixelRatio || 1)
-  const viewportWidth = Math.max(960, Math.min(1920, Math.round(window.innerWidth * ratio)))
-  const width = Math.round(viewportWidth / 16) * 16
-  const height = Math.round((width * 9) / 16)
-  return { width, height }
+  void quality
+  return { width: 1920, height: 1080 }
 }

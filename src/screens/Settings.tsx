@@ -48,23 +48,26 @@ export function Settings({ onBack }: SettingsProps) {
         <CardContent className="space-y-6">
           {/* Quality */}
           <div className="space-y-3">
-            <Label className="text-base">Calidad de video</Label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['1080p', '720p', 'auto'] as const).map(q => (
+            <Label className="text-base">Perfil de streaming</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { value: 'full', label: 'Full' },
+                { value: 'optimized', label: 'Optimizado' },
+              ] as const).map(q => (
                 <Button
-                  key={q}
-                  variant={settings.quality === q ? 'default' : 'outline'}
-                  onClick={() => setSettings(s => ({ ...s, quality: q }))}
+                  key={q.value}
+                  variant={settings.quality === q.value ? 'default' : 'outline'}
+                  onClick={() => setSettings(s => ({ ...s, quality: q.value }))}
                   className="w-full transition-transform hover:scale-[1.02] active:scale-[0.98]"
                 >
-                  {q === 'auto' ? 'Auto' : q}
+                  {q.label}
                 </Button>
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {settings.quality === 'auto'
-                ? 'Ajusta automáticamente según la conexión'
-                : `Streaming forzado a ${settings.quality}`}
+              {settings.quality === 'optimized'
+                ? 'Prioriza estabilidad en red con límites de bitrate/fps.'
+                : 'Prioriza calidad visual máxima.'}
             </p>
           </div>
 

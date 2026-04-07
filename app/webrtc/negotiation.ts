@@ -293,11 +293,90 @@ function preferH264(pc: RTCPeerConnection, preferredProfile: H264Profile): void 
 
   const [videoTransceiver] = pc.getTransceivers().filter(t => t.receiver.track.kind === 'video')
   videoTransceiver?.setCodecPreferences(sorted)
+
+  const codecSummary = sorted
+    .filter(c => c.mimeType.toLowerCase().includes('h264'))
+    .slice(0, 5)
+    .map(c => {
+      const match = c.sdpFmtpLine?.match(/profile-level-id=([0-9a-fA-F]{6})/)
+      const profile = match?.[1]?.slice(0, 2)?.toLowerCase() ?? '--'
+      return `${c.mimeType}:${profile}`
+    })
+    .join(', ')
+  console.info(`[xcast][webrtc] codec order requested (${preferredProfile}): ${codecSummary || 'none'}`)
 }
 
 // Patch SDP: enable stereo on opus audio.
 function patchStereo(sdp: string): string {
   return sdp.replace(/useinbandfec=1/g, 'useinbandfec=1; stereo=1')
+}
+
+interface LatencySdpCaps {
+  minKbps: number
+  startKbps: number
+  maxKbps: number
+  maxFr: number
+  maxFs: number
+}
+
+function getLatencySdpCaps(quality: StreamQuality): LatencySdpCaps {
+  if (quality === 'full') {
+    return { minKbps: 1800, startKbps: 3000, maxKbps: 5500, maxFr: 45, maxFs: 8160 }
+  }
+  if (quality === 'optimized') {
+    return { minKbps: 1200, startKbps: 1800, maxKbps: 3000, maxFr: 30, maxFs: 3600 }
+  }
+  return { minKbps: 1500, startKbps: 2400, maxKbps: 4200, maxFr: 40, maxFs: 8160 }
+}
+
+function patchLatencyConstraints(sdp: string, quality: StreamQuality): string {
+  const caps = getLatencySdpCaps(quality)
+  const lines = sdp.split('\n')
+  const videoStart = lines.findIndex(line => line.startsWith('m=video'))
+  if (videoStart === -1) return sdp
+  let videoEnd = lines.findIndex((line, index) => index > videoStart && line.startsWith('m='))
+  if (videoEnd === -1) videoEnd = lines.length
+
+  const videoLines = lines.slice(videoStart, videoEnd).filter(line => !line.startsWith('b=AS:') && !line.startsWith('b=TIAS:'))
+  const cLineIndex = videoLines.findIndex(line => line.startsWith('c='))
+  const bitrateLines = [`b=AS:${caps.maxKbps}`, `b=TIAS:${caps.maxKbps * 1000}`]
+  if (cLineIndex >= 0) {
+    videoLines.splice(cLineIndex + 1, 0, ...bitrateLines)
+  } else {
+    videoLines.splice(1, 0, ...bitrateLines)
+  }
+
+  const payloadByCodec = new Map<string, Set<string>>()
+  for (const line of videoLines) {
+    const match = line.match(/^a=rtpmap:(\d+)\s+([^/]+)/i)
+    if (!match) continue
+    const payload = match[1]
+    const codec = match[2].toLowerCase()
+    const payloads = payloadByCodec.get(codec) ?? new Set<string>()
+    payloads.add(payload)
+    payloadByCodec.set(codec, payloads)
+  }
+
+  const h264Payloads = payloadByCodec.get('h264') ?? new Set<string>()
+  const constrainedVideoLines = videoLines.map(line => {
+    const fmtpMatch = line.match(/^a=fmtp:(\d+)\s+(.+)$/i)
+    if (!fmtpMatch) return line
+    const payload = fmtpMatch[1]
+    if (!h264Payloads.has(payload)) return line
+    const params = fmtpMatch[2]
+    const extras = [
+      `x-google-min-bitrate=${caps.minKbps}`,
+      `x-google-start-bitrate=${caps.startKbps}`,
+      `x-google-max-bitrate=${caps.maxKbps}`,
+      `max-fr=${caps.maxFr}`,
+      `max-fs=${caps.maxFs}`,
+    ]
+    const merged = [...extras.filter(extra => !params.includes(extra.split('=')[0])), params].join('; ')
+    return `a=fmtp:${payload} ${merged}`
+  })
+
+  const patchedLines = [...lines.slice(0, videoStart), ...constrainedVideoLines, ...lines.slice(videoEnd)]
+  return patchedLines.join('\n')
 }
 
 // Parse a Teredo IPv6 address (2001::) into IPv4 + port per RFC 4380.
@@ -334,6 +413,42 @@ function expandCandidates(candidates: string[]): string[] {
   return result
 }
 
+function parseH264ProfileFromSdp(sdp: string): string {
+  const lines = sdp.split('\n').map(line => line.trim())
+  const videoMLine = lines.find(line => line.startsWith('m=video'))
+  if (!videoMLine) return 'unknown'
+  const payloads = videoMLine
+    .split(' ')
+    .slice(3)
+    .map(token => Number(token))
+    .filter(Number.isFinite)
+  const rtpmap = new Map<number, string>()
+  const fmtp = new Map<number, string>()
+  for (const line of lines) {
+    const rtpMatch = line.match(/^a=rtpmap:(\d+)\s+([^/]+)/i)
+    if (rtpMatch) {
+      rtpmap.set(Number(rtpMatch[1]), rtpMatch[2].toLowerCase())
+      continue
+    }
+    const fmtpMatch = line.match(/^a=fmtp:(\d+)\s+(.+)$/i)
+    if (fmtpMatch) {
+      fmtp.set(Number(fmtpMatch[1]), fmtpMatch[2])
+    }
+  }
+  for (const payload of payloads) {
+    if (rtpmap.get(payload) !== 'h264') continue
+    const fmtpLine = fmtp.get(payload) ?? ''
+    const profileMatch = fmtpLine.match(/profile-level-id=([0-9a-fA-F]{6})/)
+    const profile = profileMatch?.[1]?.slice(0, 2)?.toLowerCase()
+    if (!profile) return 'h264(unknown)'
+    if (profile === '42') return 'h264-baseline'
+    if (profile === '4d') return 'h264-main'
+    if (profile === '64') return 'h264-high'
+    return `h264-${profile}`
+  }
+  return 'non-h264'
+}
+
 export interface WebRTCResult {
   pc:         RTCPeerConnection
   audioTrack: MediaStreamTrack
@@ -346,7 +461,7 @@ export interface NegotiationOptions {
   h264Profile: H264Profile
 }
 
-export async function negotiate(
+async function negotiate(
   authSession:   AuthSession,
   streamSession: StreamSession,
   signal:        AbortSignal,
@@ -354,6 +469,10 @@ export async function negotiate(
   onProgress?:   (phase: 'ice-exchange' | 'waiting-tracks') => void
 ): Promise<WebRTCResult> {
   const pc = new RTCPeerConnection({})
+  const targetResolution = getPreferredResolution(options.quality)
+  console.info(
+    `[xcast][webrtc] negotiate requested profile=${options.quality} target=${targetResolution.width}x${targetResolution.height} h264=${options.h264Profile}`
+  )
   // Data channels must be created before the offer so they appear in the SDP.
   const channels = createDataChannels(pc)
   initDataChannels(channels, signal, options.quality)
@@ -390,8 +509,18 @@ export async function negotiate(
 
   // Build and patch SDP offer — send immediately (without embedded candidates)
   const offer = await pc.createOffer()
-  offer.sdp = patchStereo(offer.sdp ?? '')
+  let patchedSdp = patchStereo(offer.sdp ?? '')
+  if (options.quality === 'optimized') {
+    patchedSdp = patchLatencyConstraints(patchedSdp, options.quality)
+    const caps = getLatencySdpCaps(options.quality)
+    console.info(
+      `[xcast][webrtc] optimized caps profile=${options.quality} bitrate=${caps.minKbps}-${caps.maxKbps}kbps start=${caps.startKbps} maxFr=${caps.maxFr}`
+    )
+  }
+  offer.sdp = patchedSdp
   await pc.setLocalDescription(offer)
+  const offerProfile = parseH264ProfileFromSdp(offer.sdp ?? '')
+  console.info(`[xcast][webrtc] local offer video profile=${offerProfile}`)
 
   // POST SDP offer right away (trickle ICE: no candidates in SDP yet)
   const sdpPost = await fetch(`${SERVER}/streaming/${streamSession.sessionId}/sdp`, {
@@ -459,7 +588,10 @@ export async function negotiate(
     exchangeResponse = data.exchangeResponse
   }
 
-  await pc.setRemoteDescription({ type: 'answer', sdp: JSON.parse(exchangeResponse).sdp as string })
+  const answerSdp = JSON.parse(exchangeResponse).sdp as string
+  const answerProfile = parseH264ProfileFromSdp(answerSdp)
+  console.info(`[xcast][webrtc] remote answer video profile=${answerProfile}`)
+  await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
 
   // Wait for ICE post to finish before polling remote candidates
   await icePostDone
@@ -496,4 +628,5 @@ export async function negotiate(
   return { pc, audioTrack, videoTrack, channels }
 }
 
+export { negotiate }
 export default negotiate

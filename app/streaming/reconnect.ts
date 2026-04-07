@@ -1,5 +1,5 @@
 import type { AuthSession } from '../auth/xsts'
-import { negotiate } from '../webrtc/negotiation'
+import negotiate from '../webrtc/negotiation'
 import type { NegotiationOptions, WebRTCResult } from '../webrtc/negotiation'
 import { deleteSession, pollUntilProvisioned, startSession } from './session'
 import type { StreamSession } from './session'

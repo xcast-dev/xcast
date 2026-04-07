@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 
-type StreamQuality = '1080p' | '720p' | 'auto'
+type StreamQuality = 'full' | 'optimized'
 
 function resolutionForQuality(quality: StreamQuality): { width: number; height: number } {
-  if (quality === '720p') return { width: 1280, height: 720 }
+  void quality
   return { width: 1920, height: 1080 }
 }
 
@@ -31,7 +31,7 @@ function buildDeviceInfo(quality: StreamQuality): string {
   })
 }
 
-function streamingHeaders(gsToken: string, quality: StreamQuality = '1080p') {
+function streamingHeaders(gsToken: string, quality: StreamQuality = 'full') {
   return {
     'Accept':           'application/json',
     'Content-Type':     'application/json',
@@ -43,10 +43,10 @@ function streamingHeaders(gsToken: string, quality: StreamQuality = '1080p') {
 
 export async function streamingRoutes(server: FastifyInstance) {
   server.post('/streaming/play', async (request, reply) => {
-    const { baseUri, gsToken, serverId, quality = 'auto' } = request.body as {
+    const { baseUri, gsToken, serverId, quality = 'full' } = request.body as {
       baseUri: string; gsToken: string; serverId: string; quality?: StreamQuality
     }
-    const playQuality = quality === 'auto' ? '1080p' : quality
+    const playQuality = quality
     const resolution = resolutionForQuality(playQuality)
     console.log(`[SERVER] /play requested quality=${quality} applied=${playQuality} deviceInfo=${resolution.width}x${resolution.height}`)
     const res = await fetch(`${baseUri}/v5/sessions/home/play`, {

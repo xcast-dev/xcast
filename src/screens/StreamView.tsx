@@ -366,15 +366,8 @@ export function StreamView({
           if (!context) return
           const ratio = Math.max(1, window.devicePixelRatio || 1)
           const rect = canvas.getBoundingClientRect()
-          let width = Math.max(1, Math.round(rect.width * ratio))
-          let height = Math.max(1, Math.round(rect.height * ratio))
-          if (requestedQuality === '720p') {
-            const maxWidth = 1280
-            const maxHeight = 720
-            const scale = Math.min(maxWidth / width, maxHeight / height, 1)
-            width = Math.max(16, Math.round((width * scale) / 16) * 16)
-            height = Math.max(9, Math.round((height * scale) / 9) * 9)
-          }
+          const width = Math.max(1, Math.round(rect.width * ratio))
+          const height = Math.max(1, Math.round(rect.height * ratio))
           if (width === lastCanvasWidth && height === lastCanvasHeight) return
           canvas.width = width
           canvas.height = height
