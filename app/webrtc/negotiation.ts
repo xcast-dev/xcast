@@ -32,7 +32,7 @@ function createDataChannels(pc: RTCPeerConnection): DataChannels {
   return {
     message: pc.createDataChannel('message', { ordered: true, protocol: 'messageV1' }),
     control: pc.createDataChannel('control', { ordered: true, protocol: 'controlV1' }),
-    input:   pc.createDataChannel('input',   { ordered: true, protocol: '1.0' }),
+    input:   pc.createDataChannel('input',   { ordered: false, maxRetransmits: 0, protocol: '1.0' }),
     chat:    pc.createDataChannel('chat',    { ordered: true, protocol: 'chatV1' }),
   }
 }
@@ -147,25 +147,42 @@ function isPreferredGamepad(g: Gamepad): boolean {
 }
 
 function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChannel, seqRef: { value: number }, signal: AbortSignal): void {
+  const INPUT_TICK_MS = 1000 / 120
+  const INPUT_BUFFER_HIGH_WATERMARK = 8192
+  const INPUT_BUFFER_LOW_WATERMARK = 2048
+
   let stopped = false
-  let last: Uint8Array | null = null
+  let lastSentOrQueued: Uint8Array | null = null
   let pending: ArrayBuffer | null = null
   let flushScheduled = false
   let registeredIndex = -1
-  let rafId = 0
+  let tickTimer = 0
 
   const stop = () => {
     stopped = true
-    if (rafId) cancelAnimationFrame(rafId)
+    if (tickTimer) window.clearInterval(tickTimer)
+    channel.removeEventListener('bufferedamountlow', scheduleFlush)
   }
 
   signal.addEventListener('abort', stop, { once: true })
   channel.addEventListener('close', stop, { once: true })
+  channel.bufferedAmountLowThreshold = INPUT_BUFFER_LOW_WATERMARK
+  channel.addEventListener('bufferedamountlow', scheduleFlush)
+
+  const hasInputChanged = (next: Uint8Array, prev: Uint8Array): boolean =>
+    next.some((value, index) => value !== prev[index])
+
+  const isCriticalInputChange = (next: Uint8Array, prev: Uint8Array): boolean => {
+    for (let i = 2; i <= 15; i += 1) {
+      if (next[i] !== prev[i]) return true
+    }
+    return false
+  }
 
   const flushPending = () => {
     flushScheduled = false
     if (stopped || channel.readyState !== 'open') return
-    if (channel.bufferedAmount > 8192) {
+    if (channel.bufferedAmount > INPUT_BUFFER_HIGH_WATERMARK) {
       scheduleFlush()
       return
     }
@@ -174,7 +191,7 @@ function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChanne
     pending = null
   }
 
-  const scheduleFlush = () => {
+  function scheduleFlush() {
     if (flushScheduled) return
     flushScheduled = true
     queueMicrotask(flushPending)
@@ -193,15 +210,21 @@ function startGamepadLoop(channel: RTCDataChannel, controlChannel: RTCDataChanne
         registeredIndex = gp.index
       }
       const data = buildGamepadData(gp)
-      if (!last || data.some((b, i) => b !== last![i])) {
+      if (!lastSentOrQueued || hasInputChanged(data, lastSentOrQueued)) {
+        const isCritical = !lastSentOrQueued || isCriticalInputChange(data, lastSentOrQueued)
+        if (channel.bufferedAmount > INPUT_BUFFER_HIGH_WATERMARK && !isCritical) return
         pending = wrapInputFrame(data, 2 /* Gamepad */, seqRef.value++)
-        scheduleFlush()
-        last = data
+        lastSentOrQueued = data
+        if (isCritical) {
+          flushPending()
+        } else {
+          scheduleFlush()
+        }
       }
     }
-    rafId = requestAnimationFrame(tick)
   }
   tick()
+  tickTimer = window.setInterval(tick, INPUT_TICK_MS)
 }
 
 function whenOpen(channel: RTCDataChannel, fn: () => void): void {
@@ -451,3 +474,5 @@ export async function negotiate(
 
   return { pc, audioTrack, videoTrack, channels }
 }
+
+export default negotiate
