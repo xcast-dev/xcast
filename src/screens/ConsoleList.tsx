@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Gamepad2, Power, PowerOff, Loader2, AlertCircle, RefreshCw, LogOut, Settings as SettingsIcon } from 'lucide-react'
 import { getConsoles } from '../../app/consoles/smartglass'
@@ -40,12 +40,12 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
   const selectedIndexRef = useRef(0)
   const consolesRef = useRef<XboxConsole[]>([])
 
-  const loadConsoles = () => {
+  const loadConsoles = useCallback(() => {
     setState({ status: 'loading' })
     getConsoles(session.webToken)
       .then(consoles => setState({ status: 'ready', consoles }))
       .catch(err => setState({ status: 'error', message: (err as Error).message }))
-  }
+  }, [session.webToken])
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -61,7 +61,7 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
 
   useEffect(() => {
     loadConsoles()
-  }, [session.webToken])
+  }, [loadConsoles])
 
   useEffect(() => {
     const hasSeenOnboarding = localStorage.getItem('xcast_onboarding_seen') === '1'

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { requestDeviceCode, pollForToken } from '../../app/auth/devicecode'
 import type { UserToken } from '../../app/auth/devicecode'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,7 @@ export function Login({ onAuthenticated }: LoginProps) {
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  async function start() {
+  const start = useCallback(async () => {
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -45,16 +45,20 @@ export function Login({ onAuthenticated }: LoginProps) {
         message: err instanceof Error ? err.message : 'Unknown error',
       })
     }
-  }
+  }, [onAuthenticated])
 
   useEffect(() => {
-    void start()
-    return () => abortRef.current?.abort()
-  }, [])
+    const timer = window.setTimeout(() => {
+      void start()
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      abortRef.current?.abort()
+    }
+  }, [start])
 
   useEffect(() => {
     if (state.status !== 'waiting') {
-      setTimeRemaining(null)
       return
     }
 

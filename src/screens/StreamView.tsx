@@ -3,7 +3,7 @@ import { X, Maximize, Minimize, Keyboard, WifiOff, Signal, Volume2 } from 'lucid
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { WebRTCResult } from '../../app/webrtc/negotiation'
-import { loadSettings } from './Settings'
+import { loadSettings } from '../../app/settings/preferences'
 
 interface StreamViewProps {
   webrtc: WebRTCResult
@@ -29,6 +29,7 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
 
 export function StreamView({ webrtc, connectionStatus, connectionDetail, isForegroundActive = true, onExit }: StreamViewProps) {
   const settings = loadSettings()
+  const [showOnboarding, setShowOnboarding] = useState(false)
   const [useVideoFallback, setUseVideoFallback] = useState(false)
   const [metricsOverlay, setMetricsOverlay] = useState('')
   const [showMetricsOverlay, setShowMetricsOverlay] = useState(settings.showMetrics)
@@ -44,6 +45,11 @@ export function StreamView({ webrtc, connectionStatus, connectionDetail, isForeg
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const streamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+
+  useEffect(() => {
+    if (localStorage.getItem('xcast_stream_onboarding_seen') === '1') return
+    setShowOnboarding(true)
+  }, [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -454,7 +460,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
       resourcesBySize.clear()
       currentResource = null
     }
-  }, [webrtc.videoTrack])
+  }, [useVideoFallback, webrtc.videoTrack])
 
   useEffect(() => {
     const el = videoRef.current
@@ -637,6 +643,28 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                   <span>Salir del stream</span>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {showOnboarding && (
+          <div className="absolute bottom-20 left-4 z-50 max-w-sm rounded-lg border border-white/15 bg-black/85 p-4 text-white shadow-xl">
+            <h3 className="mb-2 text-sm font-semibold">Primer stream en xcast</h3>
+            <p className="mb-3 text-xs text-white/80">
+              Pulsa <span className="font-mono">?</span> para atajos, <span className="font-mono">F</span> para fullscreen y <span className="font-mono">Esc</span> para salir.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-8 px-3 text-xs transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                onClick={() => {
+                  localStorage.setItem('xcast_stream_onboarding_seen', '1')
+                  setShowOnboarding(false)
+                }}
+              >
+                Entendido
+              </Button>
             </div>
           </div>
         )}
