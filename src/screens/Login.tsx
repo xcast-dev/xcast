@@ -21,6 +21,11 @@ export function Login({ onAuthenticated }: LoginProps) {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const onAuthenticatedRef = useRef(onAuthenticated)
+
+  useEffect(() => {
+    onAuthenticatedRef.current = onAuthenticated
+  }, [onAuthenticated])
 
   const start = useCallback(async () => {
     abortRef.current?.abort()
@@ -37,7 +42,7 @@ export function Login({ onAuthenticated }: LoginProps) {
       setState({ status: 'waiting', userCode: user_code, verificationUri: verification_uri, expiresAt })
 
       const token = await pollForToken(device_code, interval, controller.signal)
-      onAuthenticated(token)
+      onAuthenticatedRef.current(token)
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       setState({
@@ -45,7 +50,7 @@ export function Login({ onAuthenticated }: LoginProps) {
         message: err instanceof Error ? err.message : 'Unknown error',
       })
     }
-  }, [onAuthenticated])
+  }, [])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

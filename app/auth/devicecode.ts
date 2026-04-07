@@ -41,8 +41,10 @@ export async function pollForToken(
   interval: number,
   signal: AbortSignal
 ): Promise<UserToken> {
+  let pollDelayMs = Math.max(1, interval) * 1000
+
   while (true) {
-    await sleep(interval * 1000, signal)
+    await sleep(pollDelayMs, signal)
 
     const res = await fetch(
       `${SERVER}/auth/token`,
@@ -58,11 +60,25 @@ export async function pollForToken(
       }
     )
 
-    const data = await res.json() as Record<string, string>
+    const data = await res.json() as Record<string, unknown>
+    const error = typeof data.error === 'string' ? data.error : undefined
+    const errorDescription = typeof data.error_description === 'string' ? data.error_description : undefined
 
-    if (data['error'] === 'authorization_pending') continue
-    if (data['access_token']) return data as unknown as UserToken
-    throw new Error(data['error'] ?? 'Unknown error')
+    if (error === 'authorization_pending') continue
+    if (error === 'slow_down') {
+      pollDelayMs += 5000
+      continue
+    }
+    if (error === 'authorization_declined') {
+      throw new Error('Autorización cancelada en Microsoft. Intenta de nuevo.')
+    }
+    if (error === 'expired_token' || error === 'bad_verification_code') {
+      throw new Error('El código expiró o ya no es válido. Solicita uno nuevo.')
+    }
+    if (typeof data.access_token === 'string' && typeof data.refresh_token === 'string') {
+      return data as unknown as UserToken
+    }
+    throw new Error(errorDescription ?? error ?? 'Unknown error')
   }
 }
 
