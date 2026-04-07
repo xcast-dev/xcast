@@ -7,6 +7,7 @@ import { Loader2, AlertCircle, Home } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { XboxBootLogo } from '@/components/XboxBootLogo'
 import type { UserToken } from '../app/auth/devicecode'
 import { buildAuthSession } from '../app/auth/xsts'
 import type { AuthSession } from '../app/auth/xsts'
@@ -436,19 +437,19 @@ export default function App() {
             state.sessionState === 'ReadyToConnect' ? 'Autorizando conexión' :
             'Estableciendo conexión'
         
-          return <div className="flex min-h-screen items-center justify-center p-8">
-            <Card className="w-full max-w-md">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-3">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                  Conectando
-                </CardTitle>
-                <CardDescription>{description}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground text-center">{statusText}</p>
-              </CardContent>
-            </Card>
+          return <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-8 bg-background">
+            <div className="flex flex-col items-center gap-6">
+              <XboxBootLogo size={140} />
+            </div>
+            
+            <div className="flex flex-col items-center gap-3 text-center max-w-md">
+              <h2 className="text-xl font-semibold flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                Conectando
+              </h2>
+              <p className="text-sm text-muted-foreground">{description}</p>
+              <p className="text-xs text-muted-foreground/70 font-mono">{statusText}</p>
+            </div>
           </div>
         })()
       ) : state.phase === 'streaming' ? (
