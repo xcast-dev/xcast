@@ -5,41 +5,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
-
-export interface SettingsData {
-  quality: '1080p' | '720p' | 'auto'
-  showMetrics: boolean
-  volume: number
-  h264Profile: 'high' | 'main' | 'baseline'
-}
+import {
+  loadSettings,
+  saveSettings,
+  type StreamSettings,
+} from '../../app/settings/preferences'
 
 interface SettingsProps {
   onBack: () => void
 }
 
-const DEFAULT_SETTINGS: SettingsData = {
-  quality: 'auto',
-  showMetrics: true,
-  volume: 100,
-  h264Profile: 'high',
-}
-
-export function loadSettings(): SettingsData {
-  try {
-    const stored = localStorage.getItem('xcast_settings')
-    if (!stored) return DEFAULT_SETTINGS
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
-  } catch {
-    return DEFAULT_SETTINGS
-  }
-}
-
-export function saveSettings(settings: SettingsData) {
-  localStorage.setItem('xcast_settings', JSON.stringify(settings))
-}
-
 export function Settings({ onBack }: SettingsProps) {
-  const [settings, setSettings] = useState<SettingsData>(loadSettings)
+  const [settings, setSettings] = useState<StreamSettings>(loadSettings)
 
   useEffect(() => {
     saveSettings(settings)
