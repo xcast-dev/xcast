@@ -3,7 +3,7 @@ import { X, Maximize, Minimize, Keyboard, WifiOff, Signal, Volume2 } from 'lucid
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { WebRTCResult } from '../../app/webrtc/negotiation'
-import { getPreferredResolution, loadSettings, type H264Profile, type StreamQuality } from '../../app/settings/preferences'
+import { loadSettings, type H264Profile, type StreamQuality } from '../../app/settings/preferences'
 
 interface StreamViewProps {
   webrtc: WebRTCResult
@@ -71,6 +71,10 @@ export function StreamView({
   const streamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const connectionStatusRef = useRef(connectionStatus)
   const volumeRef = useRef(volume)
+  const requestedCapsLabel =
+    requestedQuality === 'optimized'
+      ? 'sdp 1200-3000kbps @30fps'
+      : 'sdp sin límite extra'
 
   useEffect(() => {
     connectionStatusRef.current = connectionStatus
@@ -462,8 +466,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
           const dropPct = rendered + dropped > 0 ? Number(((dropped / (rendered + dropped)) * 100).toFixed(1)) : 0
           const streamResolution = `${lastVideoWidth || lastCanvasWidth}x${lastVideoHeight || lastCanvasHeight}`
           const canvasResolution = `${lastCanvasWidth}x${lastCanvasHeight}`
-          const targetResolution = getPreferredResolution(requestedQuality)
-          const targetResolutionLabel = `${targetResolution.width}x${targetResolution.height}`
           const vis = document.visibilityState === 'visible' ? 'activo' : 'pausado'
           const renderer = useVideoFallback ? 'video' : 'webgpu'
           const decodeFpsText = decodeFps != null ? `${decodeFps}` : '-'
@@ -472,7 +474,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
           const jitterText = jitterMs != null ? `${jitterMs} ms` : '-'
           const packetsLostText = packetsLost != null ? `${packetsLost}` : '-'
           setMetricsOverlay(
-            `render: ${renderer} | solicitado: ${requestedQuality}/${requestedH264Profile} (${targetResolutionLabel}) | efectivo: stream ${streamResolution}, codec ${codecLabel} | estado: ${vis} | salida: ${canvasResolution} | fps render/dec: ${fps}/${decodeFpsText} | bitrate: ${bitrateText} | rtt/jitter: ${rttText}/${jitterText} | pérdida frame/pkt: ${dropPct}% (${dropped})/${packetsLostText} | copia/render: ${avgCopyMs}ms/${avgRenderMs}ms | vol: ${volumeRef.current}% | rtc: ${connectionStatusRef.current}`
+            `render: ${renderer} | solicitado: ${requestedQuality}/${requestedH264Profile} (${requestedCapsLabel}) | efectivo: stream ${streamResolution}, codec ${codecLabel} | estado: ${vis} | salida: ${canvasResolution} | fps render/dec: ${fps}/${decodeFpsText} | bitrate: ${bitrateText} | rtt/jitter: ${rttText}/${jitterText} | pérdida frame/pkt: ${dropPct}% (${dropped})/${packetsLostText} | copia/render: ${avgCopyMs}ms/${avgRenderMs}ms | vol: ${volumeRef.current}% | rtc: ${connectionStatusRef.current}`
           )
           if (import.meta.env.DEV) {
             console.debug('[webgpu]', {
@@ -493,7 +495,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
               packetsLost,
               codecLabel,
               requestedProfile: `${requestedQuality}/${requestedH264Profile}`,
-              targetResolution: targetResolutionLabel,
+              requestedCapsLabel,
             })
           }
           metrics.copyMs = 0
@@ -617,7 +619,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
       resourcesBySize.clear()
       currentResource = null
     }
-  }, [requestedH264Profile, requestedQuality, useVideoFallback, webrtc.pc, webrtc.videoTrack])
+  }, [requestedCapsLabel, requestedH264Profile, requestedQuality, useVideoFallback, webrtc.pc, webrtc.videoTrack])
 
   useEffect(() => {
     const el = videoRef.current

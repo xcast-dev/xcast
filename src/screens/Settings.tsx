@@ -69,6 +69,9 @@ export function Settings({ onBack }: SettingsProps) {
                 ? 'Prioriza estabilidad en red con límites de bitrate/fps.'
                 : 'Prioriza calidad visual máxima.'}
             </p>
+            <p className="text-xs text-muted-foreground">
+              El cambio se aplica en la próxima conexión o reconexión del stream.
+            </p>
           </div>
 
           {/* Show Metrics */}

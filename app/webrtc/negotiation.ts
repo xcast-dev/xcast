@@ -319,18 +319,12 @@ interface LatencySdpCaps {
   maxFs: number
 }
 
-function getLatencySdpCaps(quality: StreamQuality): LatencySdpCaps {
-  if (quality === 'full') {
-    return { minKbps: 1800, startKbps: 3000, maxKbps: 5500, maxFr: 45, maxFs: 8160 }
-  }
-  if (quality === 'optimized') {
-    return { minKbps: 1200, startKbps: 1800, maxKbps: 3000, maxFr: 30, maxFs: 3600 }
-  }
-  return { minKbps: 1500, startKbps: 2400, maxKbps: 4200, maxFr: 40, maxFs: 8160 }
+function getOptimizedSdpCaps(): LatencySdpCaps {
+  return { minKbps: 1200, startKbps: 1800, maxKbps: 3000, maxFr: 30, maxFs: 3600 }
 }
 
-function patchLatencyConstraints(sdp: string, quality: StreamQuality): string {
-  const caps = getLatencySdpCaps(quality)
+function patchLatencyConstraints(sdp: string): string {
+  const caps = getOptimizedSdpCaps()
   const lines = sdp.split('\n')
   const videoStart = lines.findIndex(line => line.startsWith('m=video'))
   if (videoStart === -1) return sdp
@@ -469,9 +463,8 @@ async function negotiate(
   onProgress?:   (phase: 'ice-exchange' | 'waiting-tracks') => void
 ): Promise<WebRTCResult> {
   const pc = new RTCPeerConnection({})
-  const targetResolution = getPreferredResolution(options.quality)
   console.info(
-    `[xcast][webrtc] negotiate requested profile=${options.quality} target=${targetResolution.width}x${targetResolution.height} h264=${options.h264Profile}`
+    `[xcast][webrtc] negotiate requested profile=${options.quality} h264=${options.h264Profile}`
   )
   // Data channels must be created before the offer so they appear in the SDP.
   const channels = createDataChannels(pc)
@@ -511,8 +504,8 @@ async function negotiate(
   const offer = await pc.createOffer()
   let patchedSdp = patchStereo(offer.sdp ?? '')
   if (options.quality === 'optimized') {
-    patchedSdp = patchLatencyConstraints(patchedSdp, options.quality)
-    const caps = getLatencySdpCaps(options.quality)
+    patchedSdp = patchLatencyConstraints(patchedSdp)
+    const caps = getOptimizedSdpCaps()
     console.info(
       `[xcast][webrtc] optimized caps profile=${options.quality} bitrate=${caps.minKbps}-${caps.maxKbps}kbps start=${caps.startKbps} maxFr=${caps.maxFr}`
     )
