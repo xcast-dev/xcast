@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast, Toaster } from 'sonner'
-import { Login } from '@/screens/Login'
+import Login from '@/screens/Login'
 import { ConsoleList } from '@/screens/ConsoleList'
-import { Settings } from '@/screens/Settings'
+import Settings from '@/screens/Settings'
 import { Loader2, AlertCircle, Home } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -257,6 +257,49 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+    const currentHref = favicon?.href
+
+    const title =
+      state.phase === 'streaming'
+        ? state.connectionStatus === 'Activo'
+          ? 'xcast · Streaming'
+          : 'xcast · Reconectando'
+        : state.phase === 'consoles'
+          ? 'xcast · Consolas'
+          : state.phase === 'settings'
+            ? 'xcast · Configuración'
+            : state.phase === 'login'
+              ? 'xcast · Iniciar sesión'
+              : state.phase === 'error'
+                ? 'xcast · Error'
+                : 'xcast · Conectando'
+
+    const color =
+      state.phase === 'error'
+        ? '#ef4444'
+        : state.phase === 'streaming'
+          ? state.connectionStatus === 'Activo'
+            ? '#22c55e'
+            : '#f59e0b'
+          : '#0f172a'
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${color}"/><path d="M18 45 L32 18 L46 45 Z" fill="white" fill-opacity="0.95"/></svg>`
+    const dynamicFavicon = `data:image/svg+xml,${encodeURIComponent(svg)}`
+
+    document.title = title
+    if (favicon) {
+      favicon.href = dynamicFavicon
+    }
+
+    return () => {
+      if (favicon && currentHref) {
+        favicon.href = currentHref
+      }
+    }
+  }, [state])
+
+  useEffect(() => {
     if (state.phase !== 'streaming') return
     const { session, streamSession, consoleId, webrtc, connectionStatus } = state
 
@@ -369,7 +412,7 @@ export default function App() {
     <>
       <Toaster position="top-right" richColors />
       {state.phase === 'loading' || state.phase === 'building' ? (
-        <div className="flex min-h-screen items-center justify-center p-8">
+        <div className="flex min-h-screen items-center justify-center p-8 animate-in fade-in duration-300">
           <Card className="w-full max-w-md">
             <CardHeader>
               <CardTitle className="flex items-center gap-3">
@@ -385,7 +428,7 @@ export default function App() {
           </Card>
         </div>
       ) : state.phase === 'error' ? (
-        <div className="flex min-h-screen items-center justify-center p-8">
+        <div className="flex min-h-screen items-center justify-center p-8 animate-in fade-in duration-300">
           <Card className="w-full max-w-md border-destructive">
             <CardHeader>
               <CardTitle className="flex items-center gap-3">
@@ -437,7 +480,7 @@ export default function App() {
             state.sessionState === 'ReadyToConnect' ? 'Autorizando conexión' :
             'Estableciendo conexión'
         
-          return <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-8 bg-background">
+          return <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-8 bg-background animate-in fade-in duration-300">
             <div className="flex flex-col items-center gap-6">
               <XboxBootLogo size={140} />
             </div>
@@ -472,3 +515,4 @@ export default function App() {
     </>
   )
 }
+

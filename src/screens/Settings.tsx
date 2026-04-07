@@ -46,7 +46,7 @@ export function Settings({ onBack }: SettingsProps) {
   }, [settings])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-8">
+    <div className="flex min-h-screen items-center justify-center bg-background p-8 animate-in fade-in duration-300">
       <Card className="w-full max-w-lg">
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -54,7 +54,7 @@ export function Settings({ onBack }: SettingsProps) {
               variant="ghost"
               size="icon"
               onClick={onBack}
-              className="h-8 w-8"
+              className="h-8 w-8 transition-transform hover:scale-105 active:scale-95"
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -78,7 +78,7 @@ export function Settings({ onBack }: SettingsProps) {
                   key={q}
                   variant={settings.quality === q ? 'default' : 'outline'}
                   onClick={() => setSettings(s => ({ ...s, quality: q }))}
-                  className="w-full"
+                  className="w-full transition-transform hover:scale-[1.02] active:scale-[0.98]"
                 >
                   {q === 'auto' ? 'Auto' : q}
                 </Button>
@@ -136,7 +136,7 @@ export function Settings({ onBack }: SettingsProps) {
                   key={profile}
                   variant={settings.h264Profile === profile ? 'default' : 'outline'}
                   onClick={() => setSettings(s => ({ ...s, h264Profile: profile }))}
-                  className="w-full capitalize"
+                  className="w-full capitalize transition-transform hover:scale-[1.02] active:scale-[0.98]"
                 >
                   {profile}
                 </Button>
@@ -153,3 +153,5 @@ export function Settings({ onBack }: SettingsProps) {
     </div>
   )
 }
+
+export default Settings

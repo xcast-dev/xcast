@@ -76,7 +76,7 @@ export function Login({ onAuthenticated }: LoginProps) {
     : 0
 
   return (
-    <div className="flex min-h-screen items-center justify-center gap-8 p-8">
+    <div className="flex min-h-screen items-center justify-center gap-8 p-8 animate-in fade-in duration-300">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Iniciar sesión en Xbox</CardTitle>
@@ -106,7 +106,7 @@ export function Login({ onAuthenticated }: LoginProps) {
                 <Button
                   variant="outline"
                   onClick={() => window.open(state.verificationUri, '_blank')}
-                  className="gap-2"
+                  className="gap-2 transition-transform hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <ExternalLink className="h-4 w-4" />
                   Abrir {state.verificationUri.replace('https://', '').replace('www.', '')}
@@ -138,7 +138,7 @@ export function Login({ onAuthenticated }: LoginProps) {
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{state.message}</AlertDescription>
               </Alert>
-              <Button onClick={() => void start()} className="w-full gap-2">
+              <Button onClick={() => void start()} className="w-full gap-2 transition-transform hover:scale-[1.02] active:scale-[0.98]">
                 <RefreshCw className="h-4 w-4" />
                 Intentar de nuevo
               </Button>
@@ -151,3 +151,5 @@ export function Login({ onAuthenticated }: LoginProps) {
     </div>
   )
 }
+
+export default Login

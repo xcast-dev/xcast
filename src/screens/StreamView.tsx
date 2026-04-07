@@ -503,7 +503,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     <TooltipProvider>
       <div 
         ref={containerRef}
-        className="relative h-screen w-screen bg-black flex items-center justify-center"
+        className="relative h-screen w-screen bg-black flex items-center justify-center animate-in fade-in duration-300"
         onMouseMove={() => scheduleHideControls()}
       >
         <canvas
@@ -555,8 +555,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         <div className={`absolute bottom-0 left-0 right-0 flex items-end justify-between p-3 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
           <div className="flex items-center gap-2">
             <Tooltip>
-              <TooltipTrigger
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-colors text-white"
+                <TooltipTrigger
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-all hover:scale-105 active:scale-95 text-white"
                 onClick={() => setShowKeyboardHelp(prev => !prev)}
               >
                 <Keyboard className="h-4 w-4" />
@@ -567,7 +567,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             {onExit && (
               <Tooltip>
                 <TooltipTrigger
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-colors text-white"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-all hover:scale-105 active:scale-95 text-white"
                   onClick={onExit}
                 >
                   <X className="h-4 w-4" />
@@ -578,7 +578,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
             <Tooltip>
               <TooltipTrigger
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-colors text-white"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/70 p-0 hover:bg-black/90 transition-all hover:scale-105 active:scale-95 text-white"
                 onClick={toggleFullscreen}
               >
                 {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
@@ -613,7 +613,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-6 w-6 p-0 text-white/60 hover:text-white"
+                  className="h-6 w-6 p-0 text-white/60 hover:text-white transition-transform hover:scale-105 active:scale-95"
                   onClick={() => setShowKeyboardHelp(false)}
                 >
                   <X className="h-4 w-4" />

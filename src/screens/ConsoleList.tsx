@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { GamepadVisualizer } from '@/components/GamepadVisualizer'
 
 function formatConsoleType(type: string): string {
@@ -35,6 +36,7 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [gamepadConnected, setGamepadConnected] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
   const selectedIndexRef = useRef(0)
   const consolesRef = useRef<XboxConsole[]>([])
 
@@ -60,6 +62,13 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
   useEffect(() => {
     loadConsoles()
   }, [session.webToken])
+
+  useEffect(() => {
+    const hasSeenOnboarding = localStorage.getItem('xcast_onboarding_seen') === '1'
+    if (!hasSeenOnboarding) {
+      setShowOnboarding(true)
+    }
+  }, [])
 
   useEffect(() => {
     selectedIndexRef.current = selectedIndex
@@ -121,7 +130,7 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
   const streamableConsoles = consoles.filter(c => c.consoleStreamingEnabled && c.powerState === 'On')
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-8">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-8 animate-in fade-in duration-300">
       <Card className="w-full max-w-md">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -139,6 +148,7 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
                   size="sm"
                   variant="outline"
                   onClick={onSettings}
+                  className="transition-transform hover:scale-105 active:scale-95"
                 >
                   <SettingsIcon className="h-4 w-4" />
                 </Button>
@@ -148,6 +158,7 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
                 variant="outline"
                 onClick={handleRefresh}
                 disabled={isRefreshing || state.status === 'loading'}
+                className="transition-transform hover:scale-105 active:scale-95"
               >
                 <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               </Button>
@@ -156,6 +167,7 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
                   size="sm"
                   variant="outline"
                   onClick={onLogout}
+                  className="transition-transform hover:scale-105 active:scale-95"
                 >
                   <LogOut className="h-4 w-4" />
                 </Button>
@@ -247,6 +259,28 @@ export function ConsoleList({ session, onSelect, onLogout, onSettings }: Console
           })}
         </CardContent>
       </Card>
+
+      <Dialog open={showOnboarding} onOpenChange={setShowOnboarding}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Bienvenido a xcast</DialogTitle>
+            <DialogDescription>
+              Usa el mando o el mouse para elegir consola. Cuando empieces a hacer stream, pulsa <span className="font-mono">?</span> para ver atajos.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                localStorage.setItem('xcast_onboarding_seen', '1')
+                setShowOnboarding(false)
+              }}
+              className="transition-transform hover:scale-[1.02] active:scale-[0.98]"
+            >
+              Entendido
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       
       <GamepadVisualizer />
     </div>
