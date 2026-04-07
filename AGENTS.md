@@ -28,9 +28,11 @@ src/        React UI — components, screens, hooks
 ├── screens/
 │   ├── Login.tsx         Device Code login flow (con timer y progress)
 │   ├── ConsoleList.tsx   Console selection (SmartGlass, gamepad navigation, badges)
-│   └── StreamView.tsx    Streaming view (WebGPU + fallback video)
+│   ├── StreamView.tsx    Streaming view (WebGPU + fallback video)
+│   └── Settings.tsx      User preferences (quality, metrics, volume, H.264 profile)
 ├── components/
 │   ├── GamepadVisualizer.tsx   Debug overlay para gamepad
+│   ├── XboxBootLogo.tsx        Xbox logo draw animation during connection
 │   └── ui/               shadcn/ui components
 │       ├── button.tsx
 │       ├── card.tsx
@@ -39,7 +41,14 @@ src/        React UI — components, screens, hooks
 │       ├── separator.tsx
 │       ├── alert.tsx
 │       ├── skeleton.tsx
-│       └── progress.tsx
+│       ├── progress.tsx
+│       ├── sonner.tsx
+│       ├── dialog.tsx
+│       ├── dropdown-menu.tsx
+│       ├── switch.tsx
+│       ├── tooltip.tsx
+│       ├── label.tsx
+│       └── slider.tsx
 app/        Protocol logic — no React, no UI
 ├── auth/
 │   ├── devicecode.ts     Device Code flow + token refresh
