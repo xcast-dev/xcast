@@ -1,8 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { toast, Toaster } from 'sonner'
-import Login from '@/screens/Login'
-import { ConsoleList } from '@/screens/ConsoleList'
-import Settings from '@/screens/Settings'
 import { Loader2, AlertCircle, Home } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -11,13 +8,12 @@ import { XboxBootLogo } from '@/components/XboxBootLogo'
 import type { UserToken } from '../app/auth/devicecode'
 import { buildAuthSession } from '../app/auth/xsts'
 import type { AuthSession } from '../app/auth/xsts'
-import { saveSession, getValidSession, getRefreshToken } from '../app/auth/persistence'
-import { startSession, pollUntilProvisioned, startKeepalive } from '../app/streaming/session'
+import { clearSession, saveSession, getValidSession, getRefreshToken } from '../app/auth/persistence'
+import { deleteSession, startSession, pollUntilProvisioned, startKeepalive } from '../app/streaming/session'
 import type { SessionState, StreamSession } from '../app/streaming/session'
 import { negotiate } from '../app/webrtc/negotiation'
 import type { NegotiationOptions, WebRTCResult } from '../app/webrtc/negotiation'
-import { reconnect } from '../app/streaming/reconnect'
-import { StreamView } from '@/screens/StreamView'
+import reconnect from '../app/streaming/reconnect'
 import { loadSettings } from '../app/settings/preferences'
 
 type ConnectionStatus = 'Conectando' | 'Activo' | 'Reconectando'
@@ -33,20 +29,44 @@ type AppState =
   | { phase: 'negotiating-sdp'; session: AuthSession; consoleId: string; streamSession: StreamSession }
   | { phase: 'negotiating-ice'; session: AuthSession; consoleId: string; streamSession: StreamSession }
   | { phase: 'waiting-connection'; session: AuthSession; consoleId: string; streamSession: StreamSession }
-  | {
-      phase: 'streaming'
-      session: AuthSession
-      consoleId: string
-      streamSession: StreamSession
-      webrtc: WebRTCResult
-      connectionStatus: ConnectionStatus
-      reconnectCause?: ReconnectCause
-      reconnectAttempt?: number
-    }
-  | { phase: 'error'; message: string }
+    | {
+        phase: 'streaming'
+        session: AuthSession
+        consoleId: string
+        streamSession: StreamSession
+        webrtc: WebRTCResult
+        negotiationOptions: NegotiationOptions
+        connectionStatus: ConnectionStatus
+        reconnectCause?: ReconnectCause
+        reconnectAttempt?: number
+      }
+  | { phase: 'error'; message: string; session?: AuthSession }
+
+const Login = lazy(() => import('@/screens/Login'))
+const Settings = lazy(() => import('@/screens/Settings'))
+const ConsoleList = lazy(() =>
+  import('@/screens/ConsoleList').then(module => ({ default: module.ConsoleList }))
+)
+const StreamView = lazy(() =>
+  import('@/screens/StreamView').then(module => ({ default: module.StreamView }))
+)
 
 function reconnectDelayMs(attempt: number): number {
   return attempt <= 1 ? 500 : attempt === 2 ? 1500 : 3000
+}
+
+function isTransientWnsRegistrationFailure(message: string): boolean {
+  return message.includes('WNSError') && message.includes('WaitingForServerToRegister')
+}
+
+function formatConnectionError(message: string): string {
+  if (!isTransientWnsRegistrationFailure(message)) return message
+  return [
+    'La consola no está registrada para recibir el comando de inicio remoto (WNS).',
+    'Abre la app oficial de Xbox en la consola/PC y verifica "Remote features".',
+    'Asegúrate de que la consola esté en modo Sleep (instant-on), conectada a internet y no en apagado total.',
+    `Detalle técnico: ${message}`,
+  ].join(' ')
 }
 
 export default function App() {
@@ -90,7 +110,7 @@ export default function App() {
   async function handleConsoleSelected(session: AuthSession, consoleId: string) {
     const refreshToken = getRefreshToken()
     if (!refreshToken) {
-      setState({ phase: 'error', message: 'No refresh token — please log in again.' })
+      setState({ phase: 'error', message: 'No refresh token — please log in again.', session })
       return
     }
 
@@ -100,58 +120,85 @@ export default function App() {
 
     setState({ phase: 'connecting', session, consoleId, sessionState: 'Provisioning' })
 
-    try {
-      const settings = loadSettings()
-      const negotiationOptions: NegotiationOptions = {
-        quality: settings.quality,
-        h264Profile: settings.h264Profile,
-      }
-      const streamSession = await startSession(session, consoleId)
-      await pollUntilProvisioned(
-        session,
-        streamSession.sessionId,
-        refreshToken,
-        ac.signal,
-        sessionState => setState({ phase: 'connecting', session, consoleId, sessionState }),
-      )
-      if (ac.signal.aborted) return
+    const settings = loadSettings()
+    const negotiationOptions: NegotiationOptions = {
+      quality: settings.quality,
+      h264Profile: settings.h264Profile,
+    }
 
-      setState({ phase: 'negotiating-sdp', session, consoleId, streamSession })
+    const maxSessionAttempts = 3
+    for (let attempt = 1; attempt <= maxSessionAttempts; attempt += 1) {
+      let streamSession: StreamSession | null = null
+      try {
+        const createdStreamSession = await startSession(session, consoleId, { quality: negotiationOptions.quality })
+        streamSession = createdStreamSession
+        await pollUntilProvisioned(
+          session,
+          createdStreamSession.sessionId,
+          refreshToken,
+          ac.signal,
+          sessionState => setState({ phase: 'connecting', session, consoleId, sessionState }),
+        )
+        if (ac.signal.aborted) return
 
-      const webrtc = await negotiate(
-        session,
-        streamSession,
-        ac.signal,
-        negotiationOptions,
-        // Progress callbacks
-        (phase) => {
-          if (phase === 'ice-exchange') {
-            setState({ phase: 'negotiating-ice', session, consoleId, streamSession })
-          } else if (phase === 'waiting-tracks') {
-            setState({ phase: 'waiting-connection', session, consoleId, streamSession })
+        setState({ phase: 'negotiating-sdp', session, consoleId, streamSession: createdStreamSession })
+
+        const webrtc = await negotiate(
+          session,
+          createdStreamSession,
+          ac.signal,
+          negotiationOptions,
+          (phase) => {
+            if (phase === 'ice-exchange') {
+              setState({ phase: 'negotiating-ice', session, consoleId, streamSession: createdStreamSession })
+            } else if (phase === 'waiting-tracks') {
+              setState({ phase: 'waiting-connection', session, consoleId, streamSession: createdStreamSession })
+            }
           }
-        }
-      )
-      if (ac.signal.aborted) return
+        )
+        if (ac.signal.aborted) return
 
-      startKeepalive(session, streamSession.sessionId, ac.signal).catch(err => {
+        startKeepalive(session, createdStreamSession.sessionId, ac.signal).catch(err => {
+          if ((err as DOMException).name === 'AbortError') return
+          console.error('[RECONNECT] keepalive failure', err)
+          void handleStreamFrozen(session, createdStreamSession, consoleId, webrtc, 'keepalive')
+        })
+
+        setState({
+          phase: 'streaming',
+          session,
+          consoleId,
+          streamSession: createdStreamSession,
+          webrtc,
+          negotiationOptions,
+          connectionStatus: 'Activo',
+        })
+        return
+      } catch (err) {
+        if (ac.signal.aborted) return
         if ((err as DOMException).name === 'AbortError') return
-        console.error('[RECONNECT] keepalive failure', err)
-        void handleStreamFrozen(session, streamSession, consoleId, webrtc, 'keepalive')
-      })
+        const message = (err as Error).message
+        const shouldRetrySession = attempt < maxSessionAttempts && isTransientWnsRegistrationFailure(message)
+        if (!shouldRetrySession) {
+          setState({ phase: 'error', message: formatConnectionError(message), session })
+          return
+        }
 
-      setState({
-        phase: 'streaming',
-        session,
-        consoleId,
-        streamSession,
-        webrtc,
-        connectionStatus: 'Activo',
-      })
-    } catch (err) {
-      if (ac.signal.aborted) return
-      if ((err as DOMException).name === 'AbortError') return
-      setState({ phase: 'error', message: (err as Error).message })
+        console.warn(`[SESSION] WNS registration still pending, retrying session ${attempt + 1}/${maxSessionAttempts}`)
+        if (streamSession) {
+          void deleteSession(session, streamSession.sessionId).catch(cleanupErr =>
+            console.warn('[SESSION] failed to cleanup transient session', cleanupErr)
+          )
+        }
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(resolve, attempt * 2000)
+          ac.signal.addEventListener('abort', () => {
+            window.clearTimeout(timer)
+            reject(new DOMException('Aborted', 'AbortError'))
+          }, { once: true })
+        })
+        setState({ phase: 'connecting', session, consoleId, sessionState: 'Provisioning' })
+      }
     }
   }
 
@@ -168,7 +215,7 @@ export default function App() {
     const refreshToken = getRefreshToken()
     if (!refreshToken) {
       reconnectingRef.current = false
-      setState({ phase: 'error', message: 'No refresh token — please log in again.' })
+      setState({ phase: 'error', message: 'No refresh token — please log in again.', session })
       return
     }
 
@@ -194,14 +241,15 @@ export default function App() {
         try {
           console.warn(`[RECONNECT] attempt ${attempt}/3 cause=${cause}`)
           const settings = loadSettings()
+          const reconnectOptions: NegotiationOptions = {
+            quality: settings.quality,
+            h264Profile: settings.h264Profile,
+          }
           const result = await reconnect({
             authSession: session,
             refreshToken,
             consoleId,
-            options: {
-              quality: settings.quality,
-              h264Profile: settings.h264Profile,
-            },
+            options: reconnectOptions,
             oldStreamSession,
             signal: ac.signal,
           })
@@ -223,6 +271,7 @@ export default function App() {
             consoleId,
             streamSession: result.streamSession,
             webrtc: result.webrtc,
+            negotiationOptions: reconnectOptions,
             connectionStatus: 'Activo',
           })
           return
@@ -248,7 +297,7 @@ export default function App() {
     } catch (err) {
       if (ac.signal.aborted) return
       if ((err as DOMException).name === 'AbortError') return
-      setState({ phase: 'error', message: `Reconnect (${cause}) failed: ${(err as Error).message}` })
+      setState({ phase: 'error', message: `Reconnect (${cause}) failed: ${(err as Error).message}`, session })
     } finally {
       reconnectingRef.current = false
     }
@@ -426,107 +475,133 @@ export default function App() {
   return (
     <>
       <Toaster position="top-right" richColors />
-      {state.phase === 'loading' || state.phase === 'building' ? (
-        <div className="flex min-h-screen items-center justify-center p-8 animate-in fade-in duration-300">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                {state.phase === 'loading' ? 'Cargando' : 'Autenticando'}
-              </CardTitle>
-              <CardDescription>
-                {state.phase === 'loading' 
-                  ? 'Verificando sesión guardada…' 
-                  : 'Construyendo sesión de autenticación…'}
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        </div>
-      ) : state.phase === 'error' ? (
-        <div className="flex min-h-screen items-center justify-center p-8 animate-in fade-in duration-300">
-          <Card className="w-full max-w-md border-destructive">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-3">
-                <AlertCircle className="h-5 w-5 text-destructive" />
-                Error de conexión
-              </CardTitle>
-              <CardDescription>No se pudo establecer la conexión</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{state.message}</AlertDescription>
-              </Alert>
-              <Button onClick={() => setState({ phase: 'login' })} className="w-full gap-2">
-                <Home className="h-4 w-4" />
-                Volver al inicio
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      ) : state.phase === 'login' ? (
-        <Login onAuthenticated={handleAuthenticated} />
-      ) : state.phase === 'consoles' ? (
-        <ConsoleList
-          session={state.session}
-          onSelect={consoleId => void handleConsoleSelected(state.session, consoleId)}
-          onSettings={() => setState({ phase: 'settings', session: state.session })}
-          onLogout={() => {
-            abortRef.current?.abort()
-            localStorage.removeItem('xcast_session')
-            setState({ phase: 'login' })
-          }}
-        />
-      ) : state.phase === 'settings' ? (
-        <Settings onBack={() => setState({ phase: 'consoles', session: state.session })} />
-      ) : state.phase === 'connecting' || state.phase === 'negotiating-sdp' || state.phase === 'negotiating-ice' || state.phase === 'waiting-connection' ? (
-        (() => {
-          const statusText = 
-            state.phase === 'negotiating-sdp' ? 'Intercambiando SDP…' :
-            state.phase === 'negotiating-ice' ? 'Intercambiando candidatos ICE…' :
-            state.phase === 'waiting-connection' ? 'Esperando conexión WebRTC…' :
-            `Preparando sesión (${state.sessionState})…`
-          
-          const description = 
-            state.phase === 'negotiating-sdp' ? 'Configurando parámetros de streaming' :
-            state.phase === 'negotiating-ice' ? 'Estableciendo conexión de red' :
-            state.phase === 'waiting-connection' ? 'Verificando audio y video' :
-            state.sessionState === 'Provisioning' ? 'Inicializando stream en la consola' :
-            state.sessionState === 'ReadyToConnect' ? 'Autorizando conexión' :
-            'Estableciendo conexión'
-        
-          return <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-8 bg-background animate-in fade-in duration-300">
-            <div className="flex flex-col items-center gap-6">
-              <XboxBootLogo size={140} />
-            </div>
-            
-            <div className="flex flex-col items-center gap-3 text-center max-w-md">
-              <h2 className="text-xl font-semibold flex items-center gap-3">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                Conectando
-              </h2>
-              <p className="text-sm text-muted-foreground">{description}</p>
-              <p className="text-xs text-muted-foreground/70 font-mono">{statusText}</p>
-            </div>
+      <Suspense
+        fallback={
+          <div className="flex min-h-screen items-center justify-center p-8 animate-in fade-in duration-300">
+            <Card className="w-full max-w-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  Cargando interfaz…
+                </CardTitle>
+              </CardHeader>
+            </Card>
           </div>
-        })()
-      ) : state.phase === 'streaming' ? (
-        <StreamView
-          webrtc={state.webrtc}
-          connectionStatus={state.connectionStatus}
-          connectionDetail={
-            state.connectionStatus === 'Reconectando'
-              ? `${state.reconnectCause ?? 'unknown'}${state.reconnectAttempt ? ` (intento ${state.reconnectAttempt}/3)` : ''}`
-              : undefined
-          }
-          isForegroundActive={isForegroundActive}
-          onExit={() => {
-            abortRef.current?.abort()
-            state.webrtc.pc.close()
-            setState({ phase: 'consoles', session: state.session })
-          }}
-        />
-      ) : null}
+        }
+      >
+        {state.phase === 'loading' || state.phase === 'building' ? (
+          <div className="flex min-h-screen items-center justify-center p-8 animate-in fade-in duration-300">
+            <Card className="w-full max-w-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  {state.phase === 'loading' ? 'Cargando' : 'Autenticando'}
+                </CardTitle>
+                <CardDescription>
+                  {state.phase === 'loading' 
+                    ? 'Verificando sesión guardada…' 
+                    : 'Construyendo sesión de autenticación…'}
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          </div>
+        ) : state.phase === 'error' ? (
+          <div className="flex min-h-screen items-center justify-center p-8 animate-in fade-in duration-300">
+            <Card className="w-full max-w-md border-destructive">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-3">
+                  <AlertCircle className="h-5 w-5 text-destructive" />
+                  Error de conexión
+                </CardTitle>
+                <CardDescription>No se pudo establecer la conexión</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{state.message}</AlertDescription>
+                </Alert>
+                <Button
+                  onClick={() => {
+                    if (state.session) {
+                      setState({ phase: 'consoles', session: state.session })
+                    } else {
+                      setState({ phase: 'login' })
+                    }
+                  }}
+                  className="w-full gap-2"
+                >
+                  <Home className="h-4 w-4" />
+                  {state.session ? 'Volver a consolas' : 'Volver al inicio'}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        ) : state.phase === 'login' ? (
+          <Login onAuthenticated={handleAuthenticated} />
+        ) : state.phase === 'consoles' ? (
+          <ConsoleList
+            session={state.session}
+            onSelect={consoleId => void handleConsoleSelected(state.session, consoleId)}
+            onSettings={() => setState({ phase: 'settings', session: state.session })}
+            onLogout={() => {
+              abortRef.current?.abort()
+              clearSession()
+              setState({ phase: 'login' })
+            }}
+          />
+        ) : state.phase === 'settings' ? (
+          <Settings onBack={() => setState({ phase: 'consoles', session: state.session })} />
+        ) : state.phase === 'connecting' || state.phase === 'negotiating-sdp' || state.phase === 'negotiating-ice' || state.phase === 'waiting-connection' ? (
+          (() => {
+            const statusText = 
+              state.phase === 'negotiating-sdp' ? 'Intercambiando SDP…' :
+              state.phase === 'negotiating-ice' ? 'Intercambiando candidatos ICE…' :
+              state.phase === 'waiting-connection' ? 'Esperando conexión WebRTC…' :
+              `Preparando sesión (${state.sessionState})…`
+            
+            const description = 
+              state.phase === 'negotiating-sdp' ? 'Configurando parámetros de streaming' :
+              state.phase === 'negotiating-ice' ? 'Estableciendo conexión de red' :
+              state.phase === 'waiting-connection' ? 'Verificando audio y video' :
+              state.sessionState === 'Provisioning' ? 'Inicializando stream en la consola' :
+              state.sessionState === 'ReadyToConnect' ? 'Autorizando conexión' :
+              'Estableciendo conexión'
+          
+            return <div className="flex min-h-screen flex-col items-center justify-center gap-8 p-8 bg-background animate-in fade-in duration-300">
+              <div className="flex flex-col items-center gap-6">
+                <XboxBootLogo size={140} />
+              </div>
+              
+              <div className="flex flex-col items-center gap-3 text-center max-w-md">
+                <h2 className="text-xl font-semibold flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  Conectando
+                </h2>
+                <p className="text-sm text-muted-foreground">{description}</p>
+                <p className="text-xs text-muted-foreground/70 font-mono">{statusText}</p>
+              </div>
+            </div>
+          })()
+        ) : state.phase === 'streaming' ? (
+          <StreamView
+            webrtc={state.webrtc}
+            requestedQuality={state.negotiationOptions.quality}
+            requestedH264Profile={state.negotiationOptions.h264Profile}
+            connectionStatus={state.connectionStatus}
+            connectionDetail={
+              state.connectionStatus === 'Reconectando'
+                ? `${state.reconnectCause ?? 'unknown'}${state.reconnectAttempt ? ` (intento ${state.reconnectAttempt}/3)` : ''}`
+                : undefined
+            }
+            isForegroundActive={isForegroundActive}
+            onExit={() => {
+              abortRef.current?.abort()
+              state.webrtc.pc.close()
+              setState({ phase: 'consoles', session: state.session })
+            }}
+          />
+        ) : null}
+      </Suspense>
     </>
   )
 }
