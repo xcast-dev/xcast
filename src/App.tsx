@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toast, Toaster } from 'sonner'
 import { Login } from '@/screens/Login'
 import { ConsoleList } from '@/screens/ConsoleList'
+import { Settings } from '@/screens/Settings'
 import { Loader2, AlertCircle, Home } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,7 @@ type AppState =
   | { phase: 'login' }
   | { phase: 'building' }
   | { phase: 'consoles'; session: AuthSession }
+  | { phase: 'settings'; session: AuthSession }
   | { phase: 'connecting'; session: AuthSession; consoleId: string; sessionState: SessionState }
   | { phase: 'negotiating-sdp'; session: AuthSession; consoleId: string; streamSession: StreamSession }
   | { phase: 'negotiating-ice'; session: AuthSession; consoleId: string; streamSession: StreamSession }
@@ -409,12 +411,15 @@ export default function App() {
         <ConsoleList
           session={state.session}
           onSelect={consoleId => void handleConsoleSelected(state.session, consoleId)}
+          onSettings={() => setState({ phase: 'settings', session: state.session })}
           onLogout={() => {
             abortRef.current?.abort()
             localStorage.removeItem('xcast_session')
             setState({ phase: 'login' })
           }}
         />
+      ) : state.phase === 'settings' ? (
+        <Settings onBack={() => setState({ phase: 'consoles', session: state.session })} />
       ) : state.phase === 'connecting' || state.phase === 'negotiating-sdp' || state.phase === 'negotiating-ice' || state.phase === 'waiting-connection' ? (
         (() => {
           const statusText = 

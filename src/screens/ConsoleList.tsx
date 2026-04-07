@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Gamepad2, Power, PowerOff, Loader2, AlertCircle, RefreshCw, LogOut } from 'lucide-react'
+import { Gamepad2, Power, PowerOff, Loader2, AlertCircle, RefreshCw, LogOut, Settings as SettingsIcon } from 'lucide-react'
 import { getConsoles } from '../../app/consoles/smartglass'
 import type { XboxConsole } from '../../app/consoles/smartglass'
 import type { AuthSession } from '../../app/auth/xsts'
@@ -22,6 +22,7 @@ interface ConsoleListProps {
   session:  AuthSession
   onSelect: (consoleId: string) => void
   onLogout?: () => void
+  onSettings?: () => void
 }
 
 type State =
@@ -29,7 +30,7 @@ type State =
   | { status: 'ready'; consoles: XboxConsole[] }
   | { status: 'error'; message: string }
 
-export function ConsoleList({ session, onSelect, onLogout }: ConsoleListProps) {
+export function ConsoleList({ session, onSelect, onLogout, onSettings }: ConsoleListProps) {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [gamepadConnected, setGamepadConnected] = useState(false)
@@ -133,6 +134,15 @@ export function ConsoleList({ session, onSelect, onLogout }: ConsoleListProps) {
               </CardDescription>
             </div>
             <div className="flex gap-2">
+              {onSettings && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onSettings}
+                >
+                  <SettingsIcon className="h-4 w-4" />
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"

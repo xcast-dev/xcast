@@ -3,6 +3,7 @@ import { X, Maximize, Minimize, Keyboard, WifiOff, Signal, Volume2 } from 'lucid
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { WebRTCResult } from '../../app/webrtc/negotiation'
+import { loadSettings } from './Settings'
 
 interface StreamViewProps {
   webrtc: WebRTCResult
@@ -27,10 +28,11 @@ function getTrackProcessorCtor(): MediaStreamTrackProcessorCtor | null {
 }
 
 export function StreamView({ webrtc, connectionStatus, connectionDetail, isForegroundActive = true, onExit }: StreamViewProps) {
+  const settings = loadSettings()
   const [useVideoFallback, setUseVideoFallback] = useState(false)
   const [metricsOverlay, setMetricsOverlay] = useState('')
-  const [showMetricsOverlay, setShowMetricsOverlay] = useState(true)
-  const [volume, setVolume] = useState(100)
+  const [showMetricsOverlay, setShowMetricsOverlay] = useState(settings.showMetrics)
+  const [volume, setVolume] = useState(settings.volume)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
