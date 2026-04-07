@@ -1,5 +1,4 @@
 import type { AuthSession } from '../auth/xsts'
-import type { StreamQuality } from '../settings/preferences'
 
 const SERVER = 'http://localhost:1209'
 
@@ -8,10 +7,6 @@ export type SessionState = 'Provisioning' | 'ReadyToConnect' | 'Provisioned' | '
 export interface StreamSession {
   sessionId:   string
   sessionPath: string
-}
-
-export interface StartSessionOptions {
-  quality: StreamQuality
 }
 
 interface StateResponse {
@@ -55,13 +50,12 @@ async function getPurposeToken(refreshToken: string): Promise<string> {
 
 export async function startSession(
   session: AuthSession,
-  serverId: string,
-  options: StartSessionOptions
+  serverId: string
 ): Promise<StreamSession> {
   const res = await fetch(`${SERVER}/streaming/play`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ baseUri: session.baseUri, gsToken: session.gsToken, serverId, quality: options.quality }),
+    body:    JSON.stringify({ baseUri: session.baseUri, gsToken: session.gsToken, serverId }),
   })
   if (!res.ok) throw new Error(`startSession failed: ${res.status}`)
   return res.json() as Promise<StreamSession>

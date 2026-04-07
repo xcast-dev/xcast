@@ -35,7 +35,7 @@ async function reconnect(context: ReconnectContext): Promise<ReconnectResult> {
     await deleteSession(authSession, oldStreamSession.sessionId).catch(() => undefined)
   }
 
-  const streamSession = await startSession(authSession, consoleId, { quality: options.quality })
+  const streamSession = await startSession(authSession, consoleId)
   await pollUntilProvisioned(authSession, streamSession.sessionId, refreshToken, signal)
   const webrtc = await negotiate(authSession, streamSession, signal, options)
   return { streamSession, webrtc }

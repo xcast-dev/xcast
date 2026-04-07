@@ -130,7 +130,7 @@ export default function App() {
     for (let attempt = 1; attempt <= maxSessionAttempts; attempt += 1) {
       let streamSession: StreamSession | null = null
       try {
-        const createdStreamSession = await startSession(session, consoleId, { quality: negotiationOptions.quality })
+        const createdStreamSession = await startSession(session, consoleId)
         streamSession = createdStreamSession
         await pollUntilProvisioned(
           session,

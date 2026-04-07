@@ -1,14 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 
-type StreamQuality = 'full' | 'optimized'
-
-function resolutionForQuality(quality: StreamQuality): { width: number; height: number } {
-  void quality
-  return { width: 1920, height: 1080 }
-}
-
-function buildDeviceInfo(quality: StreamQuality): string {
-  const resolution = resolutionForQuality(quality)
+function buildDeviceInfo(): string {
   return JSON.stringify({
     appInfo: {
       env: {
@@ -24,34 +16,32 @@ function buildDeviceInfo(quality: StreamQuality): string {
       hw:  { make: 'Microsoft', model: 'Surface Pro', sdktype: 'native' },
       os:  { name: 'Windows 11', ver: '22631.2715', platform: 'desktop' },
       displayInfo: {
-        dimensions:   { widthInPixels: resolution.width, heightInPixels: resolution.height },
+        dimensions:   { widthInPixels: 1920, heightInPixels: 1080 },
         pixelDensity: { dpiX: 2, dpiY: 2 },
       },
     },
   })
 }
 
-function streamingHeaders(gsToken: string, quality: StreamQuality = 'full') {
+function streamingHeaders(gsToken: string) {
   return {
     'Accept':           'application/json',
     'Content-Type':     'application/json',
     'X-Gssv-Client':    'XboxComBrowser',
-    'X-MS-Device-Info': buildDeviceInfo(quality),
+    'X-MS-Device-Info': buildDeviceInfo(),
     'Authorization':    `Bearer ${gsToken}`,
   }
 }
 
 export async function streamingRoutes(server: FastifyInstance) {
   server.post('/streaming/play', async (request, reply) => {
-    const { baseUri, gsToken, serverId, quality = 'full' } = request.body as {
-      baseUri: string; gsToken: string; serverId: string; quality?: StreamQuality
+    const { baseUri, gsToken, serverId } = request.body as {
+      baseUri: string; gsToken: string; serverId: string
     }
-    const playQuality = quality
-    const resolution = resolutionForQuality(playQuality)
-    console.log(`[SERVER] /play requested quality=${quality} applied=${playQuality} deviceInfo=${resolution.width}x${resolution.height}`)
+    console.log('[SERVER] /play starting session with default deviceInfo=1920x1080')
     const res = await fetch(`${baseUri}/v5/sessions/home/play`, {
       method:  'POST',
-      headers: streamingHeaders(gsToken, playQuality),
+      headers: streamingHeaders(gsToken),
       body: JSON.stringify({
         titleId:           '',
         serverId,
