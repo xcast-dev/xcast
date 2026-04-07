@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast, Toaster } from 'sonner'
 import Login from '@/screens/Login'
 import { ConsoleList } from '@/screens/ConsoleList'
@@ -45,15 +45,15 @@ type AppState =
     }
   | { phase: 'error'; message: string }
 
+function reconnectDelayMs(attempt: number): number {
+  return attempt <= 1 ? 500 : attempt === 2 ? 1500 : 3000
+}
+
 export default function App() {
   const [state, setState] = useState<AppState>({ phase: 'loading' })
   const abortRef = useRef<AbortController | null>(null)
   const reconnectingRef = useRef(false)
   const [isForegroundActive, setIsForegroundActive] = useState(() => document.visibilityState === 'visible' && document.hasFocus())
-
-  function reconnectDelayMs(attempt: number): number {
-    return attempt <= 1 ? 500 : attempt === 2 ? 1500 : 3000
-  }
 
   useEffect(() => {
     const ac = new AbortController()
@@ -155,13 +155,13 @@ export default function App() {
     }
   }
 
-  async function handleStreamFrozen(
+  const handleStreamFrozen = useCallback(async (
     session: AuthSession,
     streamSession: StreamSession,
     consoleId: string,
     currentWebrtc: WebRTCResult,
     cause: ReconnectCause
-  ) {
+  ) => {
     if (reconnectingRef.current) return
     reconnectingRef.current = true
 
@@ -252,7 +252,7 @@ export default function App() {
     } finally {
       reconnectingRef.current = false
     }
-  }
+  }, [])
 
   useEffect(() => {
     const syncForeground = () => {
@@ -316,9 +316,11 @@ export default function App() {
     }
   }, [state])
 
+  const streamingState = state.phase === 'streaming' ? state : null
+
   useEffect(() => {
-    if (state.phase !== 'streaming') return
-    const { session, streamSession, consoleId, webrtc, connectionStatus } = state
+    if (!streamingState) return
+    const { session, streamSession, consoleId, webrtc, connectionStatus } = streamingState
 
     let shouldReconnectAfterResume = false
     let offlineDetected = false
@@ -417,12 +419,8 @@ export default function App() {
       webrtc.pc.removeEventListener('connectionstatechange', onConnectionStateChange)
     }
   }, [
-    state.phase,
-    state.phase === 'streaming' ? state.session : null,
-    state.phase === 'streaming' ? state.streamSession : null,
-    state.phase === 'streaming' ? state.consoleId : null,
-    state.phase === 'streaming' ? state.webrtc : null,
-    state.phase === 'streaming' ? state.connectionStatus : null,
+    handleStreamFrozen,
+    streamingState,
   ])
 
   return (
