@@ -1,44 +1,57 @@
 import type { FastifyInstance } from 'fastify'
 
-const DEVICE_INFO = JSON.stringify({
-  appInfo: {
-    env: {
-      clientAppId:      'Microsoft.GamingApp',
-      clientAppType:    'native',
-      clientAppVersion: '2203.1001.4.0',
-      clientSdkVersion: '8.5.2',
-      httpEnvironment:  'prod',
-      sdkInstallId:     '',
-    },
-  },
-  dev: {
-    hw:  { make: 'Microsoft', model: 'Surface Pro', sdktype: 'native' },
-    os:  { name: 'Windows 11', ver: '22631.2715', platform: 'desktop' },
-    displayInfo: {
-      dimensions:   { widthInPixels: 1920, heightInPixels: 1080 },
-      pixelDensity: { dpiX: 2, dpiY: 2 },
-    },
-  },
-})
+type StreamQuality = '1080p' | '720p' | 'auto'
 
-function streamingHeaders(gsToken: string) {
+function resolutionForQuality(quality: StreamQuality): { width: number; height: number } {
+  if (quality === '720p') return { width: 1280, height: 720 }
+  return { width: 1920, height: 1080 }
+}
+
+function buildDeviceInfo(quality: StreamQuality): string {
+  const resolution = resolutionForQuality(quality)
+  return JSON.stringify({
+    appInfo: {
+      env: {
+        clientAppId:      'Microsoft.GamingApp',
+        clientAppType:    'native',
+        clientAppVersion: '2203.1001.4.0',
+        clientSdkVersion: '8.5.2',
+        httpEnvironment:  'prod',
+        sdkInstallId:     '',
+      },
+    },
+    dev: {
+      hw:  { make: 'Microsoft', model: 'Surface Pro', sdktype: 'native' },
+      os:  { name: 'Windows 11', ver: '22631.2715', platform: 'desktop' },
+      displayInfo: {
+        dimensions:   { widthInPixels: resolution.width, heightInPixels: resolution.height },
+        pixelDensity: { dpiX: 2, dpiY: 2 },
+      },
+    },
+  })
+}
+
+function streamingHeaders(gsToken: string, quality: StreamQuality = '1080p') {
   return {
     'Accept':           'application/json',
     'Content-Type':     'application/json',
     'X-Gssv-Client':    'XboxComBrowser',
-    'X-MS-Device-Info': DEVICE_INFO,
+    'X-MS-Device-Info': buildDeviceInfo(quality),
     'Authorization':    `Bearer ${gsToken}`,
   }
 }
 
 export async function streamingRoutes(server: FastifyInstance) {
   server.post('/streaming/play', async (request, reply) => {
-    const { baseUri, gsToken, serverId } = request.body as {
-      baseUri: string; gsToken: string; serverId: string
+    const { baseUri, gsToken, serverId, quality = 'auto' } = request.body as {
+      baseUri: string; gsToken: string; serverId: string; quality?: StreamQuality
     }
+    const playQuality = quality === 'auto' ? '1080p' : quality
+    const resolution = resolutionForQuality(playQuality)
+    console.log(`[SERVER] /play requested quality=${quality} applied=${playQuality} deviceInfo=${resolution.width}x${resolution.height}`)
     const res = await fetch(`${baseUri}/v5/sessions/home/play`, {
       method:  'POST',
-      headers: streamingHeaders(gsToken),
+      headers: streamingHeaders(gsToken, playQuality),
       body: JSON.stringify({
         titleId:           '',
         serverId,

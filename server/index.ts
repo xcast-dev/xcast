@@ -10,6 +10,7 @@ const server = Fastify({ logger: true })
 
 await server.register(cors, {
   origin: 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 })
 
 server.addContentTypeParser(
